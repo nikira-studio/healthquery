@@ -1,0 +1,65 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 220 28% 6%;
+    --foreground: 210 25% 95%;
+    --card: 220 20% 10%;
+    --card-foreground: 210 25% 95%;
+    --muted: 220 16% 14%;
+    --muted-foreground: 215 15% 60%;
+    --border: 220 15% 18%;
+    --primary: 183 90% 42%;
+    --primary-foreground: 220 28% 6%;
+    --accent: 42 90% 55%;
+    --accent-foreground: 220 28% 6%;
+    --success: 150 65% 42%;
+    --success-foreground: 220 28% 6%;
+    --warning: 38 92% 55%;
+    --warning-foreground: 220 28% 6%;
+    --radius: 0.5rem;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: "Inter", system-ui, sans-serif;
+  }
+
+  code,
+  pre,
+  kbd {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-md border border-border bg-card/95 shadow-sm;
+  }
+
+  .panel-title {
+    @apply text-sm font-semibold tracking-tight text-foreground;
+  }
+
+  .metric-value {
+    @apply text-2xl font-semibold tracking-tight;
+  }
+
+  .pill {
+    @apply inline-flex items-center gap-1 rounded-full border border-border bg-muted px-2 py-1 text-xs text-muted-foreground;
+  }
+}

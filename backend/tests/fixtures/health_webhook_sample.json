@@ -1,0 +1,77 @@
+{
+  "timestamp": "2026-06-11T08:00:00Z",
+  "app_version": "1.2.1",
+  "source": "health_connect",
+  "steps": [
+    {
+      "start_time": "2026-06-11T00:00:00Z",
+      "end_time": "2026-06-11T23:59:59Z",
+      "value": 8420,
+      "unit": "count"
+    }
+  ],
+  "sleep": [
+    {
+      "start_time": "2026-06-10T22:30:00Z",
+      "end_time": "2026-06-11T06:20:00Z",
+      "duration_minutes": 470,
+      "efficiency_pct": 95,
+      "stages": [
+        {
+          "stage_type": "light",
+          "start_time": "2026-06-10T22:30:00Z",
+          "end_time": "2026-06-11T00:20:00Z",
+          "duration_seconds": 6600
+        }
+      ]
+    }
+  ],
+  "heart_rate": [
+    {
+      "time": "2026-06-11T08:00:00Z",
+      "value": 61,
+      "unit": "bpm"
+    }
+  ],
+  "distance": [
+    {
+      "start_time": "2026-06-11T00:00:00Z",
+      "end_time": "2026-06-11T23:59:59Z",
+      "value": 6200,
+      "unit": "m"
+    }
+  ],
+  "active_calories": [
+    {
+      "start_time": "2026-06-11T00:00:00Z",
+      "end_time": "2026-06-11T23:59:59Z",
+      "value": 780,
+      "unit": "kcal"
+    }
+  ],
+  "exercise": [
+    {
+      "activity_type": "walking",
+      "start_time": "2026-06-11T17:00:00Z",
+      "end_time": "2026-06-11T17:42:00Z",
+      "duration_minutes": 42,
+      "calories": 260,
+      "avg_hr": 112
+    }
+  ],
+  "hydration": [
+    {
+      "start_time": "2026-06-11T12:00:00Z",
+      "end_time": "2026-06-11T12:15:00Z",
+      "value": 500,
+      "unit": "ml"
+    }
+  ],
+  "weight": [
+    {
+      "time": "2026-06-11T07:30:00Z",
+      "value": 72.4,
+      "unit": "kg"
+    }
+  ]
+}

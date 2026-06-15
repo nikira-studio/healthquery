@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="HealthQuery">
+  <rect width="64" height="64" rx="14" fill="#0b1018"/>
+  <rect x="7" y="7" width="50" height="50" rx="11" fill="#121924" stroke="#243244" stroke-width="1.5"/>
+  <path d="M13 34h8l4-12 7 24 6-16h13" fill="none" stroke="#16c7d4" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="48" cy="18" r="5" fill="#8fd14f"/>
+  <path d="M43 46c5.5-2.5 9-7.2 9-13" fill="none" stroke="#8fd14f" stroke-width="2.5" stroke-linecap="round" opacity="0.85"/>
+</svg>

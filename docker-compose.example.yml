@@ -1,0 +1,35 @@
+services:
+  healthquery-api:
+    build:
+      context: ./backend
+    container_name: healthquery-api
+    restart: unless-stopped
+    expose:
+      - "3136"
+    volumes:
+      - /srv/docker-data/healthquery:/app/data
+    environment:
+      DB_PATH: /app/data/healthquery.db
+      HEALTHQUERY_INGEST_TOKEN: change-me-ingest
+      HEALTHQUERY_READ_TOKEN: change-me-read
+      HEALTHQUERY_AUTH_HEADER: X-Webhook-Token
+      HEALTHQUERY_LOG_LEVEL: INFO
+      # Optional LLM — any OpenAI-compatible endpoint. Leave blank to disable Ask tab.
+      # OpenAI:  base_url=https://api.openai.com/v1  model=gpt-4o-mini  api_key=sk-...
+      # Ollama:  base_url=http://ollama:11434/v1      model=llama3       api_key=(blank)
+      HEALTHQUERY_LLM_BASE_URL: ""
+      HEALTHQUERY_LLM_MODEL: ""
+      HEALTHQUERY_LLM_API_KEY: ""
+      HEALTHQUERY_LLM_TIMEOUT_SECONDS: "60"
+
+  healthquery:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: /api
+    container_name: healthquery
+    restart: unless-stopped
+    depends_on:
+      - healthquery-api
+    ports:
+      - "3135:8080"

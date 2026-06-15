@@ -1,0 +1,179 @@
+{
+  "timestamp": "2026-06-11T08:00:00Z",
+  "app_version": "1.2.1",
+  "source": "health_connect",
+  "steps": [
+    {
+      "start_time": "2026-06-11T00:00:00Z",
+      "end_time": "2026-06-11T23:59:59Z",
+      "value": 8420,
+      "unit": "count"
+    }
+  ],
+  "sleep": [
+    {
+      "start_time": "2026-06-10T22:30:00Z",
+      "end_time": "2026-06-11T06:20:00Z",
+      "duration_minutes": 470,
+      "efficiency_pct": 95,
+      "stages": [
+        {
+          "stage_type": "light",
+          "start_time": "2026-06-10T22:30:00Z",
+          "end_time": "2026-06-11T00:20:00Z",
+          "duration_seconds": 6600
+        }
+      ]
+    }
+  ],
+  "heart_rate": [
+    {
+      "time": "2026-06-11T08:00:00Z",
+      "value": 61,
+      "unit": "bpm"
+    }
+  ],
+  "resting_heart_rate": [
+    {
+      "time": "2026-06-11T07:45:00Z",
+      "value": 59,
+      "unit": "bpm"
+    }
+  ],
+  "heart_rate_variability": [
+    {
+      "time": "2026-06-11T07:45:00Z",
+      "value": 48,
+      "unit": "ms"
+    }
+  ],
+  "distance": [
+    {
+      "start_time": "2026-06-11T00:00:00Z",
+      "end_time": "2026-06-11T23:59:59Z",
+      "value": 6200,
+      "unit": "m"
+    }
+  ],
+  "active_calories": [
+    {
+      "start_time": "2026-06-11T00:00:00Z",
+      "end_time": "2026-06-11T23:59:59Z",
+      "value": 780,
+      "unit": "kcal"
+    }
+  ],
+  "total_calories": [
+    {
+      "start_time": "2026-06-11T00:00:00Z",
+      "end_time": "2026-06-11T23:59:59Z",
+      "value": 2100,
+      "unit": "kcal"
+    }
+  ],
+  "body_fat": [
+    {
+      "time": "2026-06-11T07:30:00Z",
+      "value": 18.4,
+      "unit": "%"
+    }
+  ],
+  "weight": [
+    {
+      "time": "2026-06-11T07:30:00Z",
+      "value": 72.4,
+      "unit": "kg"
+    }
+  ],
+  "height": [
+    {
+      "time": "2026-06-11T07:30:00Z",
+      "value": 178,
+      "unit": "cm"
+    }
+  ],
+  "blood_pressure": [
+    {
+      "time": "2026-06-11T07:30:00Z",
+      "systolic": 118,
+      "diastolic": 74,
+      "unit": "mmHg"
+    }
+  ],
+  "oxygen_saturation": [
+    {
+      "time": "2026-06-11T07:30:00Z",
+      "value": 98,
+      "unit": "%"
+    }
+  ],
+  "body_temperature": [
+    {
+      "time": "2026-06-11T07:30:00Z",
+      "value": 36.7,
+      "unit": "C"
+    }
+  ],
+  "respiratory_rate": [
+    {
+      "time": "2026-06-11T07:30:00Z",
+      "value": 14,
+      "unit": "brpm"
+    }
+  ],
+  "exercise": [
+    {
+      "activity_type": "walking",
+      "start_time": "2026-06-11T17:00:00Z",
+      "end_time": "2026-06-11T17:42:00Z",
+      "duration_minutes": 42,
+      "calories": 260,
+      "avg_hr": 112
+    }
+  ],
+  "hydration": [
+    {
+      "start_time": "2026-06-11T12:00:00Z",
+      "end_time": "2026-06-11T12:15:00Z",
+      "value": 500,
+      "unit": "ml"
+    }
+  ],
+  "nutrition": [
+    {
+      "start_time": "2026-06-11T12:30:00Z",
+      "end_time": "2026-06-11T12:35:00Z",
+      "value": 640,
+      "unit": "kcal"
+    }
+  ],
+  "mindfulness": [
+    {
+      "start_time": "2026-06-11T20:00:00Z",
+      "end_time": "2026-06-11T20:12:00Z",
+      "value": 12,
+      "unit": "min"
+    }
+  ],
+  "lean_body_mass": [
+    {
+      "time": "2026-06-11T07:30:00Z",
+      "value": 59.1,
+      "unit": "kg"
+    }
+  ],
+  "bone_mass": [
+    {
+      "time": "2026-06-11T07:30:00Z",
+      "value": 3.1,
+      "unit": "kg"
+    }
+  ],
+  "body_water_mass": [
+    {
+      "time": "2026-06-11T07:30:00Z",
+      "value": 43.2,
+      "unit": "kg"
+    }
+  ]
+}

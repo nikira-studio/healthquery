@@ -1,0 +1,54 @@
+# HealthQuery - local and generated files
+
+# Local deployment files
+docker-compose.yml
+.env
+.env.local
+.env.*.local
+
+# Persistent app data
+data/
+logs/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+ENV/
+
+# Node / frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Claude / agent-local scratch
+.claude/
+private/
+scratch/
+temp/
+plan.md
+roadmap.md
+fixes.md
+
+# Agent Core / workspace notes
+AGENTS.md
+CLAUDE.md
