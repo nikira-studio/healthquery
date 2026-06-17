@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from statistics import mean
@@ -12,6 +13,9 @@ import httpx
 from app_settings import get_settings
 from db.database import execute, fetch_all, fetch_one
 from services.operational_settings import OperationalSettings, load_operational_settings
+from utils.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def _parse_date(value: date | str | None, fallback: date | None = None) -> date:
@@ -357,14 +361,18 @@ async def _effective_llm_config() -> dict[str, Any]:
     }
 
 
-async def llm_is_configured() -> bool:
-    cfg = await _effective_llm_config()
+def _cfg_is_configured(cfg: dict[str, Any]) -> bool:
     return bool(cfg["base_url"] and cfg["model"])
 
 
-async def maybe_rewrite_with_llm(prompt: str) -> str | None:
-    cfg = await _effective_llm_config()
-    if not cfg["base_url"] or not cfg["model"]:
+async def llm_is_configured() -> bool:
+    return _cfg_is_configured(await _effective_llm_config())
+
+
+async def maybe_rewrite_with_llm(prompt: str, cfg: dict[str, Any] | None = None) -> str | None:
+    if cfg is None:
+        cfg = await _effective_llm_config()
+    if not _cfg_is_configured(cfg):
         return None
 
     url = f"{cfg['base_url'].rstrip('/')}/chat/completions"
@@ -388,15 +396,18 @@ async def maybe_rewrite_with_llm(prompt: str) -> str | None:
         "stream": False,
     }
 
-    async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
-        response = await client.post(url, json=payload, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        content = data["choices"][0]["message"]["content"].strip()
-        # Strip chain-of-thought blocks emitted by reasoning models (DeepSeek, MiniMax, QwQ, etc.)
-        import re
-        content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL).strip()
-        return content
+    try:
+        async with httpx.AsyncClient(timeout=cfg["timeout"]) as client:
+            response = await client.post(url, json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            content = data["choices"][0]["message"]["content"].strip()
+            # Strip chain-of-thought blocks emitted by reasoning models (DeepSeek, MiniMax, QwQ, etc.)
+            content = re.sub(r"<think>.*?</think>\s*", "", content, flags=re.DOTALL).strip()
+            return content
+    except Exception:
+        logger.warning("LLM request failed, falling back to deterministic output", exc_info=True)
+        return None
 
 
 async def build_ask_response(question: str, start_date: date | str | None = None, end_date: date | str | None = None) -> dict[str, Any]:
@@ -448,14 +459,15 @@ async def build_ask_response(question: str, start_date: date | str | None = None
             f"and {report['data']['workout_count']} workouts."
         )
 
-    is_llm = await llm_is_configured()
+    cfg = await _effective_llm_config()
+    is_llm = _cfg_is_configured(cfg)
     if is_llm:
         prompt = (
             f"Question: {question}\n\n"
             f"Health data summary:\n{json.dumps(report, indent=2, sort_keys=True)}\n\n"
             "Draft a concise answer for a personal health dashboard. Keep it non-diagnostic and grounded in the data."
         )
-        llm_answer = await maybe_rewrite_with_llm(prompt)
+        llm_answer = await maybe_rewrite_with_llm(prompt, cfg)
         if llm_answer:
             answer = llm_answer
 

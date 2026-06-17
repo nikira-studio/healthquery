@@ -8,7 +8,7 @@ def create_sse_event(event: str, data: str) -> str:
 
 
 def create_progress_event(message: str, percent: int) -> str:
-    return create_sse_event("progress", f'{{"message":"{message}","percent":{percent}}}')
+    return create_sse_event("progress", json.dumps({"message": message, "percent": percent}))
 
 
 def create_token_event(token: str) -> str:

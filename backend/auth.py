@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hmac
 import os
 
 from fastapi import Header, HTTPException, status
@@ -20,7 +21,7 @@ def _extract_token(header_value: str) -> str:
 
 
 def _require_token(provided: str, expected: str, token_kind: str) -> None:
-    if provided != expected:
+    if not hmac.compare_digest(provided, expected):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid {token_kind} token",

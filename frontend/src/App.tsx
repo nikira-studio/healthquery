@@ -259,7 +259,7 @@ async function readSseText(response: Response): Promise<string> {
   return collected.trim();
 }
 
-function buildFixtureDashboard(): Omit<DashboardState, "loading"> {
+function _buildFixtureDashboard(): Omit<DashboardState, "loading"> {
   const daily = [
     { summary_date: "2026-06-11", steps: 8420, active_minutes: 42, sleep_minutes: 470, workouts: 1 },
     { summary_date: "2026-06-10", steps: 7600, active_minutes: 35, sleep_minutes: 0, workouts: 0 },
@@ -432,6 +432,8 @@ function buildFixtureDashboard(): Omit<DashboardState, "loading"> {
   };
 }
 
+const FIXTURE_DASHBOARD = _buildFixtureDashboard();
+
 async function apiGet(path: string) {
   const response = await fetch(`${API_BASE}${path}`, {
     headers: {
@@ -473,7 +475,7 @@ async function loadDashboardData(): Promise<DashboardState> {
     };
   } catch {
     return {
-      ...buildFixtureDashboard(),
+      ...FIXTURE_DASHBOARD,
       loading: false,
     };
   }
@@ -529,12 +531,12 @@ function App() {
   }, []);
 
   const counts = data.status?.counts ?? {};
-  const batches = data.batches?.batches ?? buildFixtureDashboard().batches?.batches ?? [];
-  const latestSummary = data.overview?.cards?.latest_day ?? buildFixtureDashboard().overview?.cards?.latest_day;
-  const dailySummaries = data.overview?.daily_summaries ?? buildFixtureDashboard().overview?.daily_summaries ?? [];
-  const latestBatch = batches[0] ?? buildFixtureDashboard().batches?.batches?.[0];
+  const batches = data.batches?.batches ?? FIXTURE_DASHBOARD.batches?.batches ?? [];
+  const latestSummary = data.overview?.cards?.latest_day ?? FIXTURE_DASHBOARD.overview?.cards?.latest_day;
+  const dailySummaries = data.overview?.daily_summaries ?? FIXTURE_DASHBOARD.overview?.daily_summaries ?? [];
+  const latestBatch = batches[0] ?? FIXTURE_DASHBOARD.batches?.batches?.[0];
   const previousSummary = dailySummaries[1] ?? null;
-  const config = data.config ?? buildFixtureDashboard().config;
+  const config = data.config ?? FIXTURE_DASHBOARD.config;
   const reportWindowDays = config?.report_window_days ?? 7;
   const lastSyncAt = data.status?.last_sync_at ?? null;
   const lastSyncMinutes = minutesSinceIso(lastSyncAt);
@@ -571,17 +573,16 @@ function App() {
   );
   const weeklyAverageSteps = weeklyRows.length ? Math.round(weeklyTotals.steps / weeklyRows.length) : 0;
   const weeklyAverageSleep = weeklyRows.length ? Math.round(weeklyTotals.sleep / weeklyRows.length) : 0;
-  const weeklyStepTotal = weeklyRows.reduce((total, row) => total + Number(row.steps ?? 0), 0);
-  const timelineEvents = (data.timeline?.events ?? buildFixtureDashboard().timeline?.events ?? []).map((event) => ({
+const timelineEvents = (data.timeline?.events ?? FIXTURE_DASHBOARD.timeline?.events ?? []).map((event) => ({
     ...event,
     detail_json: event.detail_json,
   }));
 
-  const activityWorkouts = data.activity?.workouts ?? buildFixtureDashboard().activity?.workouts ?? [];
-  const activityDailyRows = data.activity?.daily_summaries ?? buildFixtureDashboard().activity?.daily_summaries ?? [];
-  const activityIntervals = data.activity?.interval_metrics ?? buildFixtureDashboard().activity?.interval_metrics ?? [];
+  const activityWorkouts = data.activity?.workouts ?? FIXTURE_DASHBOARD.activity?.workouts ?? [];
+  const activityDailyRows = data.activity?.daily_summaries ?? FIXTURE_DASHBOARD.activity?.daily_summaries ?? [];
+  const activityIntervals = data.activity?.interval_metrics ?? FIXTURE_DASHBOARD.activity?.interval_metrics ?? [];
   const recentStepIntervals = activityIntervals.filter((row) => row.metric_type === "steps").slice(0, 8);
-  const sleepSessions = data.sleep?.sessions ?? buildFixtureDashboard().sleep?.sessions ?? [];
+  const sleepSessions = data.sleep?.sessions ?? FIXTURE_DASHBOARD.sleep?.sessions ?? [];
   const uniqueSleepSessions = Array.from(
     new Map(
       sleepSessions.map((row) => [
@@ -590,13 +591,13 @@ function App() {
       ]),
     ).values(),
   );
-  const sleepStages = data.sleep?.stages ?? buildFixtureDashboard().sleep?.stages ?? [];
+  const sleepStages = data.sleep?.stages ?? FIXTURE_DASHBOARD.sleep?.stages ?? [];
   const stageTotals = sleepStages.reduce<Record<string, number>>((acc, row) => {
     const label = String(row.stage_type ?? "unknown");
     acc[label] = (acc[label] ?? 0) + Number(row.duration_seconds ?? 0);
     return acc;
   }, {});
-  const vitalsRows = data.vitals?.point_metrics ?? buildFixtureDashboard().vitals?.point_metrics ?? [];
+  const vitalsRows = data.vitals?.point_metrics ?? FIXTURE_DASHBOARD.vitals?.point_metrics ?? [];
   const vitalsByType = Array.from(
     vitalsRows.reduce<Map<string, Array<Record<string, unknown>>>>((acc, row) => {
       const key = String(row.metric_type ?? "metric");
@@ -610,7 +611,7 @@ function App() {
   const vitalsWindowLabel = vitalsLatestTimes.length
     ? `Recent readings through ${format(new Date(Math.max(...vitalsLatestTimes)), "MMM d, p")}`
     : "No recent vitals";
-  const bodyRows = data.body?.point_metrics ?? buildFixtureDashboard().body?.point_metrics ?? [];
+  const bodyRows = data.body?.point_metrics ?? FIXTURE_DASHBOARD.body?.point_metrics ?? [];
   const bodyByType = Array.from(
     bodyRows.reduce<Map<string, Array<Record<string, unknown>>>>((acc, row) => {
       const key = String(row.metric_type ?? "metric");
@@ -620,7 +621,7 @@ function App() {
   );
 
   const restingHr = (data.vitals?.point_metrics ?? []).find((row) => row.metric_type === "resting_heart_rate")?.numeric_value
-    ?? buildFixtureDashboard().vitals?.point_metrics?.find((row) => row.metric_type === "resting_heart_rate")?.numeric_value
+    ?? FIXTURE_DASHBOARD.vitals?.point_metrics?.find((row) => row.metric_type === "resting_heart_rate")?.numeric_value
     ?? 0;
 
   const snapshotRows = [
@@ -660,7 +661,7 @@ function App() {
     {
       label: "Latest steps",
       value: formatNumber(latestSummary?.steps),
-      delta: `7d total ${formatNumber(weeklyStepTotal)}`,
+      delta: `7d total ${formatNumber(weeklyTotals.steps)}`,
       icon: Activity,
     },
     {
@@ -1139,8 +1140,8 @@ function App() {
     }
 
     if (activeTab === "Data") {
-      const batchRows = data.batches?.batches ?? buildFixtureDashboard().batches?.batches ?? [];
-      const countsRows = Object.entries(data.status?.counts ?? buildFixtureDashboard().status?.counts ?? {});
+      const batchRows = data.batches?.batches ?? FIXTURE_DASHBOARD.batches?.batches ?? [];
+      const countsRows = Object.entries(data.status?.counts ?? FIXTURE_DASHBOARD.status?.counts ?? {});
       return (
         <div className="grid gap-4 xl:grid-cols-[1fr_1.2fr]">
           <div className="space-y-3">

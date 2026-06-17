@@ -574,7 +574,7 @@ async def ingest_health_payload(payload: dict[str, Any]) -> dict[str, Any]:
             ) as cursor:
                 workout_row = await cursor.fetchone()
             def _int_or_none(value: float | None) -> int | None:
-                return int(round(value)) if value else None
+                return int(round(value)) if value is not None else None
 
             steps_val = _int_or_none(steps_row["steps"] if steps_row else None)
             active_val = _int_or_none(workout_row["active_minutes"] if workout_row else None)

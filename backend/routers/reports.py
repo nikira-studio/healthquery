@@ -37,7 +37,7 @@ class AskRequest(DateRangeRequest):
 async def post_doctor_visit_report(body: DoctorVisitReportRequest) -> Any:
     report = await build_doctor_visit_report(body.start_date, body.end_date)
 
-    if body.stream and llm_is_configured():
+    if body.stream and await llm_is_configured():
         async def event_stream() -> AsyncIterator[str]:
             yield create_progress_event("Compiling report", 20)
             prompt = (

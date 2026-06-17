@@ -40,13 +40,14 @@ def _cap_rows(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int, bo
         if len(capped_rows) >= MAX_QUERY_ROWS:
             truncated = True
             break
-        candidate = [*capped_rows, row]
-        candidate_bytes = len(json.dumps(candidate, separators=(",", ":"), sort_keys=True).encode("utf-8"))
-        if candidate_bytes > MAX_QUERY_BYTES:
+        row_bytes = len(json.dumps(row, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+        # +1 for comma separator between items
+        overhead = 1 if capped_rows else 0
+        if byte_count + row_bytes + overhead > MAX_QUERY_BYTES:
             truncated = True
             break
         capped_rows.append(row)
-        byte_count = candidate_bytes
+        byte_count += row_bytes + overhead
     if len(capped_rows) < len(rows):
         truncated = True
     return capped_rows, byte_count, truncated
@@ -161,11 +162,17 @@ async def health_query(body: SqlQueryRequest) -> dict[str, Any]:
     except SqlGuardError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    rows = await fetch_all(guard.normalized_sql)
-    capped_rows, byte_count, truncated = _cap_rows(rows)
+    # Fetch one extra row so we can detect truncation without loading an unbounded result set.
+    limited_sql = f"SELECT * FROM ({guard.normalized_sql}) LIMIT {MAX_QUERY_ROWS + 1}"
+    rows = await fetch_all(limited_sql)
+    db_truncated = len(rows) > MAX_QUERY_ROWS
+    if db_truncated:
+        rows = rows[:MAX_QUERY_ROWS]
+    capped_rows, byte_count, byte_truncated = _cap_rows(rows)
+    truncated = db_truncated or byte_truncated
     return {
         "sql": guard.normalized_sql,
-        "row_count": len(rows),
+        "row_count": len(capped_rows),
         "returned_row_count": len(capped_rows),
         "byte_count": byte_count,
         "truncated": truncated,
