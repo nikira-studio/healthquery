@@ -177,6 +177,7 @@ All variables go in `docker-compose.yml` under `healthquery-api` → `environmen
 | `HEALTHQUERY_LLM_MODEL` | No | — | Model name (e.g. `gpt-4o-mini`, `llama3`) |
 | `HEALTHQUERY_LLM_API_KEY` | No | — | API key (leave blank for local models) |
 | `HEALTHQUERY_LLM_TIMEOUT_SECONDS` | No | `60` | LLM request timeout |
+| `HEALTHQUERY_CORS_ORIGINS` | No | `*` | Comma-separated allowed CORS origins (e.g. `https://health.example.com`) |
 | `DB_PATH` | No | `/app/data/healthquery.db` | SQLite database path inside the container |
 
 The frontend build also takes two build args:
