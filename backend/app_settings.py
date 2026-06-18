@@ -15,6 +15,7 @@ class AppSettings:
     llm_model: str | None
     llm_api_key: str | None
     llm_timeout_seconds: float
+    cors_origins: list[str]
 
 
 def _is_placeholder_token(value: str, placeholder_prefix: str) -> bool:
@@ -30,6 +31,8 @@ def get_settings() -> AppSettings:
     llm_model = os.getenv("HEALTHQUERY_LLM_MODEL", "").strip() or None
     llm_api_key = os.getenv("HEALTHQUERY_LLM_API_KEY", "").strip() or None
     llm_timeout_seconds = float(os.getenv("HEALTHQUERY_LLM_TIMEOUT_SECONDS", "60"))
+    raw_origins = os.getenv("HEALTHQUERY_CORS_ORIGINS", "").strip()
+    cors_origins = [o.strip() for o in raw_origins.split(",") if o.strip()] if raw_origins else ["*"]
     return AppSettings(
         db_path=db_path,
         ingest_token=ingest_token,
@@ -39,6 +42,7 @@ def get_settings() -> AppSettings:
         llm_model=llm_model,
         llm_api_key=llm_api_key,
         llm_timeout_seconds=llm_timeout_seconds,
+        cors_origins=cors_origins,
     )
 
 

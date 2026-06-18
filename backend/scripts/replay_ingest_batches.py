@@ -19,7 +19,6 @@ DERIVED_TABLES = (
     "sleep_sessions",
     "workouts",
     "daily_summaries",
-    "timeline_events",
     "ingest_batches",
 )
 

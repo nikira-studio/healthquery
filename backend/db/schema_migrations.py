@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 MIGRATIONS_DIR = Path(__file__).with_name("migrations")
 
 
