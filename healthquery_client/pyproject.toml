@@ -32,8 +32,10 @@ test = [
     "pytest-asyncio>=0.23",
 ]
 
-[tool.setuptools]
-packages = ["healthquery_client"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["healthquery_client*"]
+exclude = ["tests*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

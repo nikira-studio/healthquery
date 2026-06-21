@@ -1,8 +1,8 @@
 """Synchronous and async HTTP clients for the HealthQuery read API.
 
 The clients are thin wrappers around :mod:`httpx`. They centralise auth
-header construction, base URL resolution, error mapping, and the
-endpoint-to-method mapping so individual callers (Health Coach,
+header construction, base URL resolution, error mapping, retry, and
+the endpoint-to-method mapping so individual callers (Health Coach,
 reporters, MCP server, tests) can stay small.
 
 Design notes
@@ -18,12 +18,19 @@ Design notes
 * The HTTP transport is injectable for tests; pass a
   ``httpx.Client``/``httpx.AsyncClient`` instance via ``transport=`` to
   point the client at a mock.
+* 5xx responses are retried up to three times with exponential backoff.
+  401/403 responses are never retried — they surface as
+  :class:`HealthQueryAuthError` immediately.
+* The bearer token is never written to logs, never included in error
+  messages, and never appears in ``__repr__`` / ``__str__``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import os
-from typing import Any, Mapping, MutableMapping
+import random
+from typing import Any, Awaitable, Callable, Mapping, MutableMapping
 
 import httpx
 
@@ -36,6 +43,8 @@ from .exceptions import (
 
 DEFAULT_BASE_URL = "http://healthquery-api:3136"
 DEFAULT_TIMEOUT_SECONDS = 30.0
+DEFAULT_MAX_RETRIES = 3
+DEFAULT_RETRY_BACKOFF_SECONDS = 0.5
 API_PREFIX = "/api/health"
 REPORTS_PREFIX = "/api/reports"
 
@@ -50,17 +59,40 @@ def _default_read_token() -> str:
 
 
 def _is_sql_guard_rejection(status_code: int, payload: object) -> bool:
+    """Heuristic for backend ``SqlGuardError`` 400 responses.
+
+    The backend raises ``SqlGuardError`` for any rejection of the
+    ``/api/health/query`` payload. The messages are stable across versions
+    (see ``backend/services/sql_guard.py``), so matching them is reliable.
+    """
     if status_code != 400:
         return False
+    text: str | None = None
     if isinstance(payload, str):
-        lowered = payload.lower()
-        return "sql" in lowered and ("guard" in lowered or "rejected" in lowered or "read-only" in lowered)
-    if isinstance(payload, dict):
+        text = payload
+    elif isinstance(payload, dict):
         detail = payload.get("detail")
         if isinstance(detail, str):
-            lowered = detail.lower()
-            return "sql" in lowered and ("guard" in lowered or "read-only" in lowered or "rejected" in lowered)
-    return False
+            text = detail
+    if text is None:
+        return False
+    lowered = text.lower()
+    needles = (
+        "only select statements",
+        "only one statement",
+        "forbidden sql construct",
+        "invalid sql",
+        "sql query is required",
+        "sql guard",
+    )
+    return any(needle in lowered for needle in needles)
+
+
+def _redact_token(text: str, token: str | None) -> str:
+    """Return ``text`` with the bearer token (if any) replaced by ``***``."""
+    if not token:
+        return text
+    return text.replace(token, "***")
 
 
 class _BaseClient:
@@ -71,6 +103,10 @@ class _BaseClient:
         base_url: str | None = None,
         read_token: str | None = None,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        retry_backoff_seconds: float = DEFAULT_RETRY_BACKOFF_SECONDS,
+        retry_sleep: Callable[[float], None] | None = None,
+        retry_async_sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
         resolved_base = (base_url if base_url is not None else _default_base_url()).strip()
         if not resolved_base:
@@ -81,23 +117,52 @@ class _BaseClient:
                 "HEALTHQUERY_READ_TOKEN is required; "
                 "pass read_token= or set the env var"
             )
+        if max_retries < 0:
+            raise ValueError("max_retries must be >= 0")
+        if retry_backoff_seconds < 0:
+            raise ValueError("retry_backoff_seconds must be >= 0")
         self.base_url = resolved_base.rstrip("/")
         self.read_token = resolved_token
         self.timeout_seconds = timeout_seconds
+        self.max_retries = max_retries
+        self.retry_backoff_seconds = retry_backoff_seconds
+        self._retry_sleep = retry_sleep
+        self._retry_async_sleep = retry_async_sleep
+
+    def __repr__(self) -> str:
+        return (
+            f"{type(self).__name__}(base_url={self.base_url!r}, "
+            f"read_token=***, timeout_seconds={self.timeout_seconds}, "
+            f"max_retries={self.max_retries})"
+        )
 
     @property
     def _headers(self) -> MutableMapping[str, str]:
         return {"Authorization": f"Bearer {self.read_token}"}
 
+    def _should_retry(self, status_code: int, attempt: int) -> bool:
+        return 500 <= status_code < 600 and attempt < self.max_retries
+
+    def _compute_backoff(self, attempt: int) -> float:
+        base = self.retry_backoff_seconds * (2 ** attempt)
+        jitter = random.uniform(0.0, base * 0.25)
+        return base + jitter
+
     @staticmethod
-    def _raise_for_status(response: httpx.Response) -> None:
+    def _raise_for_status(response: httpx.Response, *, token: str | None = None) -> None:
         if response.status_code < 400:
             return
         if response.status_code in (401, 403):
             raise HealthQueryAuthError(
-                f"HealthQuery rejected the bearer token (HTTP {response.status_code})"
+                _redact_token(
+                    f"HealthQuery rejected the bearer token (HTTP {response.status_code})",
+                    token,
+                )
             )
         api_error = HealthQueryAPIError.from_response(response)
+        # Defense in depth: if the api somehow echoes the bearer in the
+        # detail, scrub it before the exception text leaves the client.
+        api_error.detail = _redact_token(str(api_error.detail), token)  # type: ignore[assignment]
         if _is_sql_guard_rejection(api_error.status_code, api_error.detail):
             raise HealthQuerySQLGuardError(api_error.status_code, api_error.detail)
         raise api_error
