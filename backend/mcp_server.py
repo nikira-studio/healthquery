@@ -92,7 +92,7 @@ async def get_daily_activity(start_date: date | str | None = None, end_date: dat
     )
     return {
         **_requested_range(start_date, end_date),
-        "daily_summaries": result["rows"],
+        "daily_summaries": result.rows,
     }
 
 
@@ -118,8 +118,8 @@ async def get_sleep_summary(start_date: date | str | None = None, end_date: date
     )
     return {
         **_requested_range(start_date, end_date),
-        "sessions": sessions["rows"],
-        "stages": stages["rows"],
+        "sessions": sessions.rows,
+        "stages": stages.rows,
     }
 
 
@@ -141,7 +141,7 @@ async def get_vitals_summary(start_date: date | str | None = None, end_date: dat
     )
     return {
         **_requested_range(start_date, end_date),
-        "point_metrics": result["rows"],
+        "point_metrics": result.rows,
     }
 
 
@@ -160,7 +160,7 @@ async def get_body_summary(start_date: date | str | None = None, end_date: date 
     )
     return {
         **_requested_range(start_date, end_date),
-        "point_metrics": result["rows"],
+        "point_metrics": result.rows,
     }
 
 

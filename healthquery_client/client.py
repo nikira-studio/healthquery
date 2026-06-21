@@ -40,6 +40,7 @@ from .exceptions import (
     HealthQuerySQLGuardError,
     HealthQueryTransportError,
 )
+from .models import ConfigResponse, HealthQueryResult, HealthStatus
 
 DEFAULT_BASE_URL = "http://healthquery-api:3136"
 DEFAULT_TIMEOUT_SECONDS = 30.0
@@ -89,8 +90,13 @@ def _is_sql_guard_rejection(status_code: int, payload: object) -> bool:
 
 
 def _redact_token(text: str, token: str | None) -> str:
-    """Return ``text`` with the bearer token (if any) replaced by ``***``."""
-    if not token:
+    """Return ``text`` with the bearer token (if any) replaced by ``***``.
+
+    Only tokens that look like bearer tokens (>= 8 chars, not pure
+    whitespace) are scrubbed, so short single-character tokens cannot
+    accidentally rewrite legitimate server messages.
+    """
+    if not token or len(token) < 8:
         return text
     return text.replace(token, "***")
 
@@ -162,10 +168,15 @@ class _BaseClient:
         api_error = HealthQueryAPIError.from_response(response)
         # Defense in depth: if the api somehow echoes the bearer in the
         # detail, scrub it before the exception text leaves the client.
-        api_error.detail = _redact_token(str(api_error.detail), token)  # type: ignore[assignment]
-        if _is_sql_guard_rejection(api_error.status_code, api_error.detail):
-            raise HealthQuerySQLGuardError(api_error.status_code, api_error.detail)
-        raise api_error
+        if token:
+            scrubbed_detail: object = _redact_token(str(api_error.detail), token)
+        else:
+            scrubbed_detail = api_error.detail
+        # SQL guard rejections get their own subclass so callers can branch
+        # on the specific failure mode without parsing the message.
+        if _is_sql_guard_rejection(api_error.status_code, scrubbed_detail):
+            raise HealthQuerySQLGuardError(api_error.status_code, scrubbed_detail)
+        raise HealthQueryAPIError(api_error.status_code, scrubbed_detail)
 
 
 class HealthQueryClient(_BaseClient):
@@ -186,10 +197,20 @@ class HealthQueryClient(_BaseClient):
         base_url: str | None = None,
         read_token: str | None = None,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        retry_backoff_seconds: float = DEFAULT_RETRY_BACKOFF_SECONDS,
+        retry_sleep: Callable[[float], None] | None = None,
         *,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        super().__init__(base_url=base_url, read_token=read_token, timeout_seconds=timeout_seconds)
+        super().__init__(
+            base_url=base_url,
+            read_token=read_token,
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+            retry_sleep=retry_sleep,
+        )
         if transport is not None:
             self._owns_client = False
             self._client = httpx.Client(
@@ -216,6 +237,14 @@ class HealthQueryClient(_BaseClient):
     def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         self.close()
 
+    def _sleep(self, seconds: float) -> None:
+        if self._retry_sleep is not None:
+            self._retry_sleep(seconds)
+            return
+        import time
+
+        time.sleep(seconds)
+
     def _request_json(
         self,
         method: str,
@@ -223,27 +252,60 @@ class HealthQueryClient(_BaseClient):
         *,
         params: Mapping[str, Any] | None = None,
         json_body: Mapping[str, Any] | None = None,
+        auth_required: bool = True,
     ) -> Any:
-        try:
-            response = self._client.request(method, path, params=params, json=json_body)
-        except httpx.HTTPError as exc:
-            raise HealthQueryTransportError(
-                f"HealthQuery request failed: {exc}"
-            ) from exc
-        self._raise_for_status(response)
-        if response.status_code == 204 or not response.content:
+        """Issue a request with 5xx retry.
+
+        ``auth_required=False`` is used by :meth:`probe` for the no-auth
+        liveness endpoint, which must not send ``Authorization``.
+        """
+        # When auth is not required, pass an empty Authorization header so
+        # it overrides the base client headers (httpx merges request-level
+        # headers over base headers, but only when the request header is
+        # explicitly set to an empty string for the well-known header).
+        headers_override: dict[str, str] | None = None
+        if not auth_required:
+            headers_override = {"Authorization": ""}
+        last_response: httpx.Response | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self._client.request(
+                    method,
+                    path,
+                    params=params,
+                    json=json_body,
+                    headers=headers_override,
+                )
+            except httpx.HTTPError as exc:
+                raise HealthQueryTransportError(
+                    f"HealthQuery request failed: {exc}"
+                ) from exc
+            last_response = response
+            if 500 <= response.status_code < 600 and self._should_retry(
+                response.status_code, attempt
+            ):
+                self._sleep(self._compute_backoff(attempt))
+                continue
+            break
+        assert last_response is not None
+        self._raise_for_status(last_response, token=None if not auth_required else self.read_token)
+        if last_response.status_code == 204 or not last_response.content:
             return None
         try:
-            return response.json()
+            return last_response.json()
         except ValueError as exc:
             raise HealthQueryTransportError(
-                f"HealthQuery returned non-JSON body: {response.text!r}"
+                f"HealthQuery returned non-JSON body: {last_response.text!r}"
             ) from exc
 
     # --- /api/health/* ---
 
-    def get_status(self) -> dict[str, Any]:
-        return self._request_json("GET", f"{API_PREFIX}/status")
+    def probe(self) -> dict[str, Any]:
+        """Call ``GET /api/health`` (no auth) for liveness checks."""
+        return self._request_json("GET", "/api/health", auth_required=False)
+
+    def get_status(self) -> "HealthStatus":
+        return HealthStatus.model_validate(self._request_json("GET", f"{API_PREFIX}/status"))
 
     def get_overview(self) -> dict[str, Any]:
         return self._request_json("GET", f"{API_PREFIX}/overview")
@@ -269,11 +331,13 @@ class HealthQueryClient(_BaseClient):
     def get_batches(self, limit: int = 10) -> dict[str, Any]:
         return self._request_json("GET", f"{API_PREFIX}/batches", params={"limit": limit})
 
-    def get_config(self) -> dict[str, Any]:
-        return self._request_json("GET", f"{API_PREFIX}/config")
+    def get_config(self) -> "ConfigResponse":
+        return ConfigResponse.model_validate(self._request_json("GET", f"{API_PREFIX}/config"))
 
-    def post_query(self, sql: str) -> dict[str, Any]:
-        return self._request_json("POST", f"{API_PREFIX}/query", json_body={"sql": sql})
+    def post_query(self, sql: str) -> "HealthQueryResult":
+        return HealthQueryResult.model_validate(
+            self._request_json("POST", f"{API_PREFIX}/query", json_body={"sql": sql})
+        )
 
     # --- /api/reports/* ---
 
@@ -317,10 +381,20 @@ class AsyncHealthQueryClient(_BaseClient):
         base_url: str | None = None,
         read_token: str | None = None,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        max_retries: int = DEFAULT_MAX_RETRIES,
+        retry_backoff_seconds: float = DEFAULT_RETRY_BACKOFF_SECONDS,
+        retry_sleep: Callable[[float], Awaitable[None]] | None = None,
         *,
         transport: httpx.AsyncBaseTransport | None = None,
     ) -> None:
-        super().__init__(base_url=base_url, read_token=read_token, timeout_seconds=timeout_seconds)
+        super().__init__(
+            base_url=base_url,
+            read_token=read_token,
+            timeout_seconds=timeout_seconds,
+            max_retries=max_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+            retry_async_sleep=retry_sleep,
+        )
         if transport is not None:
             self._owns_client = False
             self._client = httpx.AsyncClient(
@@ -347,6 +421,12 @@ class AsyncHealthQueryClient(_BaseClient):
     async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         await self.aclose()
 
+    async def _sleep(self, seconds: float) -> None:
+        if self._retry_async_sleep is not None:
+            await self._retry_async_sleep(seconds)
+            return
+        await asyncio.sleep(seconds)
+
     async def _request_json(
         self,
         method: str,
@@ -354,27 +434,54 @@ class AsyncHealthQueryClient(_BaseClient):
         *,
         params: Mapping[str, Any] | None = None,
         json_body: Mapping[str, Any] | None = None,
+        auth_required: bool = True,
     ) -> Any:
-        try:
-            response = await self._client.request(method, path, params=params, json=json_body)
-        except httpx.HTTPError as exc:
-            raise HealthQueryTransportError(
-                f"HealthQuery request failed: {exc}"
-            ) from exc
-        self._raise_for_status(response)
-        if response.status_code == 204 or not response.content:
+        headers_override: dict[str, str] | None = None
+        if not auth_required:
+            headers_override = {"Authorization": ""}
+        last_response: httpx.Response | None = None
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = await self._client.request(
+                    method,
+                    path,
+                    params=params,
+                    json=json_body,
+                    headers=headers_override,
+                )
+            except httpx.HTTPError as exc:
+                raise HealthQueryTransportError(
+                    f"HealthQuery request failed: {exc}"
+                ) from exc
+            last_response = response
+            if 500 <= response.status_code < 600 and self._should_retry(
+                response.status_code, attempt
+            ):
+                await self._sleep(self._compute_backoff(attempt))
+                continue
+            break
+        assert last_response is not None
+        self._raise_for_status(
+            last_response, token=None if not auth_required else self.read_token
+        )
+        if last_response.status_code == 204 or not last_response.content:
             return None
         try:
-            return response.json()
+            return last_response.json()
         except ValueError as exc:
             raise HealthQueryTransportError(
-                f"HealthQuery returned non-JSON body: {response.text!r}"
+                f"HealthQuery returned non-JSON body: {last_response.text!r}"
             ) from exc
 
     # --- /api/health/* ---
 
-    async def get_status(self) -> dict[str, Any]:
-        return await self._request_json("GET", f"{API_PREFIX}/status")
+    async def probe(self) -> dict[str, Any]:
+        return await self._request_json("GET", "/api/health", auth_required=False)
+
+    async def get_status(self) -> "HealthStatus":
+        return HealthStatus.model_validate(
+            await self._request_json("GET", f"{API_PREFIX}/status")
+        )
 
     async def get_overview(self) -> dict[str, Any]:
         return await self._request_json("GET", f"{API_PREFIX}/overview")
@@ -400,11 +507,15 @@ class AsyncHealthQueryClient(_BaseClient):
     async def get_batches(self, limit: int = 10) -> dict[str, Any]:
         return await self._request_json("GET", f"{API_PREFIX}/batches", params={"limit": limit})
 
-    async def get_config(self) -> dict[str, Any]:
-        return await self._request_json("GET", f"{API_PREFIX}/config")
+    async def get_config(self) -> "ConfigResponse":
+        return ConfigResponse.model_validate(
+            await self._request_json("GET", f"{API_PREFIX}/config")
+        )
 
-    async def post_query(self, sql: str) -> dict[str, Any]:
-        return await self._request_json("POST", f"{API_PREFIX}/query", json_body={"sql": sql})
+    async def post_query(self, sql: str) -> "HealthQueryResult":
+        return HealthQueryResult.model_validate(
+            await self._request_json("POST", f"{API_PREFIX}/query", json_body={"sql": sql})
+        )
 
     # --- /api/reports/* ---
 
