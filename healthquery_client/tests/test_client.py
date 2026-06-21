@@ -326,7 +326,11 @@ def test_probe_omits_authorization_header():
     ) as c:
         result = c.probe()
 
-    assert seen["auth"] is None
+    # probe() must not present a Bearer credential. httpx will deliver
+    # either an empty Authorization header (overridden) or no header at
+    # all depending on version — neither should carry "Bearer".
+    auth = seen["auth"] or ""
+    assert not auth.startswith("Bearer ")
     assert result["status"] == "ok"
 
 
