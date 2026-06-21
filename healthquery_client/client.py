@@ -1,0 +1,371 @@
+"""Synchronous and async HTTP clients for the HealthQuery read API.
+
+The clients are thin wrappers around :mod:`httpx`. They centralise auth
+header construction, base URL resolution, error mapping, and the
+endpoint-to-method mapping so individual callers (Health Coach,
+reporters, MCP server, tests) can stay small.
+
+Design notes
+------------
+
+* ``HEALTHQUERY_BASE_URL`` defaults to ``http://healthquery-api:3136``
+  because that is the in-cluster DNS name + port the Health Coach and
+  other Docker Compose services should use. Operators running the client
+  outside the compose network can override the env var, or pass
+  ``base_url`` explicitly.
+* ``HEALTHQUERY_READ_TOKEN`` is mandatory. The clients raise
+  :class:`HealthQueryAuthError` at construction time if it is missing.
+* The HTTP transport is injectable for tests; pass a
+  ``httpx.Client``/``httpx.AsyncClient`` instance via ``transport=`` to
+  point the client at a mock.
+"""
+
+from __future__ import annotations
+
+import os
+from typing import Any, Mapping, MutableMapping
+
+import httpx
+
+from .exceptions import (
+    HealthQueryAPIError,
+    HealthQueryAuthError,
+    HealthQuerySQLGuardError,
+    HealthQueryTransportError,
+)
+
+DEFAULT_BASE_URL = "http://healthquery-api:3136"
+DEFAULT_TIMEOUT_SECONDS = 30.0
+API_PREFIX = "/api/health"
+REPORTS_PREFIX = "/api/reports"
+
+
+def _default_base_url() -> str:
+    value = os.getenv("HEALTHQUERY_BASE_URL", "").strip()
+    return value.rstrip("/") if value else DEFAULT_BASE_URL
+
+
+def _default_read_token() -> str:
+    return os.getenv("HEALTHQUERY_READ_TOKEN", "").strip()
+
+
+def _is_sql_guard_rejection(status_code: int, payload: object) -> bool:
+    if status_code != 400:
+        return False
+    if isinstance(payload, str):
+        lowered = payload.lower()
+        return "sql" in lowered and ("guard" in lowered or "rejected" in lowered or "read-only" in lowered)
+    if isinstance(payload, dict):
+        detail = payload.get("detail")
+        if isinstance(detail, str):
+            lowered = detail.lower()
+            return "sql" in lowered and ("guard" in lowered or "read-only" in lowered or "rejected" in lowered)
+    return False
+
+
+class _BaseClient:
+    """Shared state for sync and async clients."""
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        read_token: str | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    ) -> None:
+        resolved_base = (base_url if base_url is not None else _default_base_url()).strip()
+        if not resolved_base:
+            raise HealthQueryAuthError("HealthQuery base_url is required")
+        resolved_token = (read_token if read_token is not None else _default_read_token()).strip()
+        if not resolved_token:
+            raise HealthQueryAuthError(
+                "HEALTHQUERY_READ_TOKEN is required; "
+                "pass read_token= or set the env var"
+            )
+        self.base_url = resolved_base.rstrip("/")
+        self.read_token = resolved_token
+        self.timeout_seconds = timeout_seconds
+
+    @property
+    def _headers(self) -> MutableMapping[str, str]:
+        return {"Authorization": f"Bearer {self.read_token}"}
+
+    @staticmethod
+    def _raise_for_status(response: httpx.Response) -> None:
+        if response.status_code < 400:
+            return
+        if response.status_code in (401, 403):
+            raise HealthQueryAuthError(
+                f"HealthQuery rejected the bearer token (HTTP {response.status_code})"
+            )
+        api_error = HealthQueryAPIError.from_response(response)
+        if _is_sql_guard_rejection(api_error.status_code, api_error.detail):
+            raise HealthQuerySQLGuardError(api_error.status_code, api_error.detail)
+        raise api_error
+
+
+class HealthQueryClient(_BaseClient):
+    """Synchronous HealthQuery client.
+
+    Example::
+
+        from healthquery_client import HealthQueryClient
+
+        with HealthQueryClient() as client:
+            status = client.get_status()
+            overview = client.get_overview()
+            timeline = client.get_timeline(days=14)
+    """
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        read_token: str | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        *,
+        transport: httpx.BaseTransport | None = None,
+    ) -> None:
+        super().__init__(base_url=base_url, read_token=read_token, timeout_seconds=timeout_seconds)
+        if transport is not None:
+            self._owns_client = False
+            self._client = httpx.Client(
+                base_url=self.base_url,
+                headers=dict(self._headers),
+                timeout=timeout_seconds,
+                transport=transport,
+            )
+        else:
+            self._owns_client = True
+            self._client = httpx.Client(
+                base_url=self.base_url,
+                headers=dict(self._headers),
+                timeout=timeout_seconds,
+            )
+
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
+
+    def __enter__(self) -> "HealthQueryClient":
+        return self
+
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self.close()
+
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        json_body: Mapping[str, Any] | None = None,
+    ) -> Any:
+        try:
+            response = self._client.request(method, path, params=params, json=json_body)
+        except httpx.HTTPError as exc:
+            raise HealthQueryTransportError(
+                f"HealthQuery request failed: {exc}"
+            ) from exc
+        self._raise_for_status(response)
+        if response.status_code == 204 or not response.content:
+            return None
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise HealthQueryTransportError(
+                f"HealthQuery returned non-JSON body: {response.text!r}"
+            ) from exc
+
+    # --- /api/health/* ---
+
+    def get_status(self) -> dict[str, Any]:
+        return self._request_json("GET", f"{API_PREFIX}/status")
+
+    def get_overview(self) -> dict[str, Any]:
+        return self._request_json("GET", f"{API_PREFIX}/overview")
+
+    def get_summary(self) -> dict[str, Any]:
+        return self._request_json("GET", f"{API_PREFIX}/summary")
+
+    def get_activity(self) -> dict[str, Any]:
+        return self._request_json("GET", f"{API_PREFIX}/activity")
+
+    def get_sleep(self) -> dict[str, Any]:
+        return self._request_json("GET", f"{API_PREFIX}/sleep")
+
+    def get_vitals(self) -> dict[str, Any]:
+        return self._request_json("GET", f"{API_PREFIX}/vitals")
+
+    def get_body(self) -> dict[str, Any]:
+        return self._request_json("GET", f"{API_PREFIX}/body")
+
+    def get_timeline(self, days: int = 14) -> dict[str, Any]:
+        return self._request_json("GET", f"{API_PREFIX}/timeline", params={"days": days})
+
+    def get_batches(self, limit: int = 10) -> dict[str, Any]:
+        return self._request_json("GET", f"{API_PREFIX}/batches", params={"limit": limit})
+
+    def get_config(self) -> dict[str, Any]:
+        return self._request_json("GET", f"{API_PREFIX}/config")
+
+    def post_query(self, sql: str) -> dict[str, Any]:
+        return self._request_json("POST", f"{API_PREFIX}/query", json_body={"sql": sql})
+
+    # --- /api/reports/* ---
+
+    def generate_doctor_visit_report(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        *,
+        stream: bool = False,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"stream": stream}
+        if start_date is not None:
+            body["start_date"] = start_date
+        if end_date is not None:
+            body["end_date"] = end_date
+        return self._request_json("POST", f"{REPORTS_PREFIX}/doctor-visit", json_body=body)
+
+    def ask_health_question(
+        self,
+        question: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"question": question}
+        if start_date is not None:
+            body["start_date"] = start_date
+        if end_date is not None:
+            body["end_date"] = end_date
+        return self._request_json("POST", f"{REPORTS_PREFIX}/ask", json_body=body)
+
+
+class AsyncHealthQueryClient(_BaseClient):
+    """Asynchronous HealthQuery client.
+
+    Same surface as :class:`HealthQueryClient`; uses ``httpx.AsyncClient``
+    so callers can ``await`` calls in a FastAPI/agent loop.
+    """
+
+    def __init__(
+        self,
+        base_url: str | None = None,
+        read_token: str | None = None,
+        timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        *,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        super().__init__(base_url=base_url, read_token=read_token, timeout_seconds=timeout_seconds)
+        if transport is not None:
+            self._owns_client = False
+            self._client = httpx.AsyncClient(
+                base_url=self.base_url,
+                headers=dict(self._headers),
+                timeout=timeout_seconds,
+                transport=transport,
+            )
+        else:
+            self._owns_client = True
+            self._client = httpx.AsyncClient(
+                base_url=self.base_url,
+                headers=dict(self._headers),
+                timeout=timeout_seconds,
+            )
+
+    async def aclose(self) -> None:
+        if self._owns_client:
+            await self._client.aclose()
+
+    async def __aenter__(self) -> "AsyncHealthQueryClient":
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        await self.aclose()
+
+    async def _request_json(
+        self,
+        method: str,
+        path: str,
+        *,
+        params: Mapping[str, Any] | None = None,
+        json_body: Mapping[str, Any] | None = None,
+    ) -> Any:
+        try:
+            response = await self._client.request(method, path, params=params, json=json_body)
+        except httpx.HTTPError as exc:
+            raise HealthQueryTransportError(
+                f"HealthQuery request failed: {exc}"
+            ) from exc
+        self._raise_for_status(response)
+        if response.status_code == 204 or not response.content:
+            return None
+        try:
+            return response.json()
+        except ValueError as exc:
+            raise HealthQueryTransportError(
+                f"HealthQuery returned non-JSON body: {response.text!r}"
+            ) from exc
+
+    # --- /api/health/* ---
+
+    async def get_status(self) -> dict[str, Any]:
+        return await self._request_json("GET", f"{API_PREFIX}/status")
+
+    async def get_overview(self) -> dict[str, Any]:
+        return await self._request_json("GET", f"{API_PREFIX}/overview")
+
+    async def get_summary(self) -> dict[str, Any]:
+        return await self._request_json("GET", f"{API_PREFIX}/summary")
+
+    async def get_activity(self) -> dict[str, Any]:
+        return await self._request_json("GET", f"{API_PREFIX}/activity")
+
+    async def get_sleep(self) -> dict[str, Any]:
+        return await self._request_json("GET", f"{API_PREFIX}/sleep")
+
+    async def get_vitals(self) -> dict[str, Any]:
+        return await self._request_json("GET", f"{API_PREFIX}/vitals")
+
+    async def get_body(self) -> dict[str, Any]:
+        return await self._request_json("GET", f"{API_PREFIX}/body")
+
+    async def get_timeline(self, days: int = 14) -> dict[str, Any]:
+        return await self._request_json("GET", f"{API_PREFIX}/timeline", params={"days": days})
+
+    async def get_batches(self, limit: int = 10) -> dict[str, Any]:
+        return await self._request_json("GET", f"{API_PREFIX}/batches", params={"limit": limit})
+
+    async def get_config(self) -> dict[str, Any]:
+        return await self._request_json("GET", f"{API_PREFIX}/config")
+
+    async def post_query(self, sql: str) -> dict[str, Any]:
+        return await self._request_json("POST", f"{API_PREFIX}/query", json_body={"sql": sql})
+
+    # --- /api/reports/* ---
+
+    async def generate_doctor_visit_report(
+        self,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        *,
+        stream: bool = False,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"stream": stream}
+        if start_date is not None:
+            body["start_date"] = start_date
+        if end_date is not None:
+            body["end_date"] = end_date
+        return await self._request_json("POST", f"{REPORTS_PREFIX}/doctor-visit", json_body=body)
+
+    async def ask_health_question(
+        self,
+        question: str,
+        start_date: str | None = None,
+        end_date: str | None = None,
+    ) -> dict[str, Any]:
+        body: dict[str, Any] = {"question": question}
+        if start_date is not None:
+            body["start_date"] = start_date
+        if end_date is not None:
+            body["end_date"] = end_date
+        return await self._request_json("POST", f"{REPORTS_PREFIX}/ask", json_body=body)
