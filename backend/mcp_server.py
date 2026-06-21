@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import sys
 from datetime import date
+from pathlib import Path
 
 from fastmcp import FastMCP
 
-from healthquery_client import AsyncHealthQueryClient
+# Make the in-tree ``healthquery_client`` package importable when this MCP
+# server runs as a subprocess from a checkout. In the api container image
+# the package is installed via pip (see backend/Dockerfile), so the sys.path
+# bootstrap is a no-op there.
+_PACKAGE_PARENT = Path(__file__).resolve().parent.parent
+if str(_PACKAGE_PARENT) not in sys.path:
+    sys.path.insert(0, str(_PACKAGE_PARENT))
+
+from healthquery_client import AsyncHealthQueryClient  # noqa: E402
 
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
