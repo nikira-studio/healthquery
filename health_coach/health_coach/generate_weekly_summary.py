@@ -115,33 +115,34 @@ def fetch_inputs(
     ]
 
     activity = client.get_activity()
-    steps_intervals = [
-        s
-        for s in (activity.get("interval_metrics") or [])
-        if isinstance(s, dict)
-        and s.get("metric_type") == "steps"
-        and _within(s.get("start_time"), s.get("end_time"), window_start_iso, window_end_iso)
-    ]
-    distance_intervals = [
-        s
-        for s in (activity.get("interval_metrics") or [])
-        if isinstance(s, dict)
-        and s.get("metric_type") == "distance"
-        and _within(s.get("start_time"), s.get("end_time"), window_start_iso, window_end_iso)
-    ]
-    total_calories_intervals = [
-        s
-        for s in (activity.get("interval_metrics") or [])
-        if isinstance(s, dict)
-        and s.get("metric_type") == "total_calories"
-        and _within(s.get("start_time"), s.get("end_time"), window_start_iso, window_end_iso)
-    ]
     workouts = [
         w
         for w in (activity.get("workouts") or [])
         if isinstance(w, dict)
         and _within(w.get("start_time"), w.get("end_time"), window_start_iso, window_end_iso)
     ]
+
+    # The /api/health/activity view truncates interval_metrics to the
+    # most recent 20 rows; for a 7-day window we need date-range
+    # slices from /api/health/query. Each query is bounded by the
+    # 1000-row cap, which is comfortably above the operator's per-week
+    # volume for these metric types.
+    def _query_intervals(metric_type: str) -> list[dict]:
+        sql = (
+            "SELECT metric_type, numeric_value, start_time, end_time, unit "
+            "FROM metric_intervals "
+            f"WHERE metric_type = '{_sql_quote(metric_type)}' "
+            f"AND start_time >= '{_sql_quote(window_start_iso)}' "
+            f"AND start_time <= '{_sql_quote(window_end_iso)}'"
+        )
+        result = client.post_query(sql)
+        return [dict(row) for row in result.rows if isinstance(row, dict)]
+
+    steps_intervals = _query_intervals("steps")
+    distance_intervals = _query_intervals("distance")
+    total_calories_intervals = _query_intervals("total_calories")
+
+
 
     # Vitals come through /query because /api/health/vitals is
     # "most-recent-N" and we need date-bound slices.

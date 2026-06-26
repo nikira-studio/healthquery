@@ -75,12 +75,19 @@ def _stage(start: str, end: str, stage: str = "light") -> dict:
 
 
 def _steps(when: str, count: int = 1000) -> dict:
+    end = _shift_iso(when, 86399)
     return {
         "metric_type": "steps",
         "start_time": when,
-        "end_time": when,
+        "end_time": end,
         "numeric_value": count,
     }
+
+
+def _shift_iso(value: str, seconds: int) -> str:
+    from datetime import datetime, timedelta
+    text = value.replace("Z", "+00:00")
+    return (datetime.fromisoformat(text) + timedelta(seconds=seconds)).isoformat().replace("+00:00", "Z")
 
 
 def _distance(when: str, meters: float = 800.0) -> dict:

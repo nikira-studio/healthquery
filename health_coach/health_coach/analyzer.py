@@ -559,7 +559,8 @@ def _trend_aggregate_activity(
             )
         )
     # Calorie coverage is sparse (Health Connect writes once a day);
-    # bucket by start_time and skip sub-minute records the same way.
+    # only count daily-total rows (span ≥ 12 hours). Per-workout calorie
+    # intervals are short and would double-count the daily total.
     calorie_values: list[float] = []
     for c in calories:
         if not isinstance(c.get("numeric_value"), (int, float)):
@@ -575,10 +576,10 @@ def _trend_aggregate_activity(
                 end_dt = _parse_iso(end)
                 if start_dt and end_dt:
                     span_seconds = (end_dt - start_dt).total_seconds()
-                    if span_seconds < 300:
+                    if span_seconds < 12 * 3600:
                         continue
             except Exception:
-                pass
+                continue
         calorie_values.append(float(c["numeric_value"]))
     if calorie_values:
         aggregates.append(
