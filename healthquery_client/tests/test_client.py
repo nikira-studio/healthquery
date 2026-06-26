@@ -214,6 +214,35 @@ def test_api_error_on_non_json_error_body():
     assert excinfo.value.status_code == 502
 
 
+def test_non_json_success_body_does_not_leak_token_via_repr():
+    """STA-53: the non-JSON 200 path must redact the bearer from the
+    surfaced message so the exception text never echoes the token."""
+
+    secret = "super-secret-bearer-token-aabbccdd"
+    # Build a body that contains the token verbatim; if the surfacing code
+    # uses repr() of response.text without redaction, this leaks.
+    handler = _transport(
+        lambda request: _text(
+            200,
+            f"<html>internal error detail: token={secret}</html>",
+        )
+    )
+
+    with pytest.raises(HealthQueryTransportError) as excinfo:
+        with HealthQueryClient(
+            base_url="http://x",
+            read_token=secret,
+            transport=handler,
+            max_retries=0,
+        ) as c:
+            c.get_status()
+
+    rendered = repr(excinfo.value)
+    rendered_str = str(excinfo.value)
+    assert secret not in rendered
+    assert secret not in rendered_str
+
+
 # --- retry behavior --------------------------------------------------------
 
 

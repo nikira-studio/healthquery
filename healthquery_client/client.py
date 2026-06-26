@@ -294,8 +294,13 @@ class HealthQueryClient(_BaseClient):
         try:
             return last_response.json()
         except ValueError as exc:
+            # Defense in depth: redact the bearer from the surfaced body
+            # text so the exception never echoes the token. This mirrors
+            # the 401/403 path at :meth:`_raise_for_status` and closes the
+            # last remaining surface where the token could leak via repr().
+            safe_text = _redact_token(last_response.text, self.read_token)
             raise HealthQueryTransportError(
-                f"HealthQuery returned non-JSON body: {last_response.text!r}"
+                f"HealthQuery returned non-JSON body: {safe_text!r}"
             ) from exc
 
     # --- /api/health/* ---
@@ -469,8 +474,12 @@ class AsyncHealthQueryClient(_BaseClient):
         try:
             return last_response.json()
         except ValueError as exc:
+            # Defense in depth: mirror the sync client — redact the bearer
+            # from the surfaced body text so the exception never echoes
+            # the token.
+            safe_text = _redact_token(last_response.text, self.read_token)
             raise HealthQueryTransportError(
-                f"HealthQuery returned non-JSON body: {last_response.text!r}"
+                f"HealthQuery returned non-JSON body: {safe_text!r}"
             ) from exc
 
     # --- /api/health/* ---
