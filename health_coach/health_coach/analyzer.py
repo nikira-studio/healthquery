@@ -363,21 +363,13 @@ def _trend_aggregate_sleep(
             notes=("data not available — sleep sessions in window have no duration_minutes",),
         )
     notes: list[str] = []
-    # Coarse stage mix (privacy-preserving; no per-stage durations in the body).
+    # Per-stage labels are stripped from the body (STA-53 privacy review).
+    # The report names only the count of stage rows present, never the
+    # per-stage distribution, so the operator's stage share is never
+    # disclosed. Stage-level detail is available behind a query if the
+    # operator wants it explicitly.
     if stages:
-        by_type: dict[str, int] = {}
-        for st in stages:
-            t = st.get("stage_type")
-            if not isinstance(t, str):
-                continue
-            by_type[t] = by_type.get(t, 0) + 1
-        if by_type:
-            total = sum(by_type.values())
-            top = sorted(by_type.items(), key=lambda kv: -kv[1])[:3]
-            label = ", ".join(
-                f"{name} {round(100 * n / total):.0f}%" for name, n in top
-            )
-            notes.append(f"stage mix (row share, not minutes): {label}")
+        notes.append(f"{len(stages)} sleep-stage rows present in window")
     return WeeklyTrend(
         name="Sleep",
         data_available=True,

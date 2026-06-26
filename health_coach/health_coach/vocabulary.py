@@ -119,11 +119,17 @@ def describe_vocabulary() -> dict[str, list[str] | int]:
 
     Used by the report header so the operator can verify the analyzer
     is reading the same vocabulary the introspection pass recorded.
+
+    The per-stage sleep labels are intentionally **not** included —
+    STA-53 privacy review strips them from the report body even as
+    schema metadata. The count is enough to confirm the analyzer's
+    mapping table is the same length the operator's HealthQuery
+    currently emits, without enumerating the labels in narrative.
     """
     return {
         "metric_point_types": sorted(KNOWN_METRIC_TYPES),
         "metric_interval_types": sorted(KNOWN_INTERVAL_TYPES),
-        "sleep_stages": sorted(KNOWN_SLEEP_STAGES),
         "absent_metric_types": sorted(ABSENT_METRIC_TYPES),
         "workout_codes_mapped": len(WORKOUT_CODE_TO_LABEL),
+        "sleep_stage_label_count": len(KNOWN_SLEEP_STAGES),
     }

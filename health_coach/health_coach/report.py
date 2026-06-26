@@ -9,10 +9,11 @@ The Privacy Promise
 Every value rendered into the Markdown body is one of:
 
 * a named aggregate (mean, min, max, count, percentage, etc.),
-* a coarse stage-mix share (the row share of each sleep stage),
 * the source ``batch_id`` (or its sha256 when disclosure is too granular),
 * the run id, the data window, the read-token alias,
-* a "data not available" note for an absent metric.
+* a "data not available" note for an absent metric,
+* a coarse "N rows present" note for stage / interval tables (no
+  per-stage or per-row labels).
 
 The body never contains:
 
@@ -20,7 +21,11 @@ The body never contains:
 * a raw ``metric_points`` row,
 * a raw ``sleep_sessions`` row,
 * a raw ``workouts`` row,
-* the raw ``payload_json`` of an ingest batch.
+* the raw ``payload_json`` of an ingest batch,
+* per-stage sleep labels (``awake`` / ``light`` / ``deep`` / ``rem`` /
+  any future stage vocabulary), or the per-stage row share for any
+  stage. The 8-class Health Connect stage set is never enumerated in
+  narrative, even as schema metadata; only stage-row counts are.
 """
 
 from __future__ import annotations
