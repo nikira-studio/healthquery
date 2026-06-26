@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "health_coach"
+version = "0.1.0"
+description = "Health Coach summary generator — read-side consumer of HealthQuery."
+requires-python = ">=3.10"
+dependencies = [
+    "healthquery_client",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["health_coach*"]
