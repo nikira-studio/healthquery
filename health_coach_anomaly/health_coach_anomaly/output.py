@@ -75,6 +75,16 @@ class Anomaly:
     ``id`` is a stable, human-readable identifier (e.g.
     ``"hrv_drop_2026-06-19_to_2026-06-26"``) so the build-#4
     weekly summary can refer to the same record across renders.
+
+    Window shape (so the operator can reproduce the numbers):
+
+    * ``data_window`` — the *current* window (start, end, days).
+    * ``baseline_window`` — the *baseline* window (start, end, days).
+    * ``current_value`` — the metric's current stats
+      (e.g. ``{"mean_ms": 45, "samples": 5}`` for HRV).
+    * ``baseline_value`` — the metric's baseline stats
+      (e.g. ``{"mean_ms": 60, "samples": 30}``).
+    * ``context`` — co-movement and illness/training-load signals.
     """
 
     id: str
@@ -84,8 +94,9 @@ class Anomaly:
     severity: AnomalySeverity
     summary: str
     data_window: dict[str, str]
-    current: dict[str, Any]
-    baseline: dict[str, Any]
+    baseline_window: dict[str, str]
+    current_value: dict[str, Any]
+    baseline_value: dict[str, Any]
     context: dict[str, Any] = field(default_factory=dict)
     recommendation: str | None = None
     source: str = "healthquery"

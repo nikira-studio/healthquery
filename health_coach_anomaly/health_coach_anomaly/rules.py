@@ -64,19 +64,12 @@ def _make_id(rule: str, window: WindowSpec) -> str:
     return f"{rule}_{window.iso_start}_{window.iso_end}".replace(":", "")
 
 
-def _window_dicts(window: WindowSpec) -> tuple[dict[str, str], dict[str, str]]:
-    return (
-        {
-            "start": window.iso_start,
-            "end": window.iso_end,
-            "days": str(window.days),
-        },
-        {
-            "start": window.iso_start,
-            "end": window.iso_end,
-            "days": str(window.days),
-        },
-    )
+def _window_to_dict(window: WindowSpec) -> dict[str, str]:
+    return {
+        "start": window.iso_start,
+        "end": window.iso_end,
+        "days": str(window.days),
+    }
 
 
 def _percent_summary(pct: float | None) -> str:
@@ -108,12 +101,12 @@ def evaluate_hrv(
     ``data_not_available`` and the summary renders "HRV not yet
     ingested" rather than firing a false flag.
     """
-    data_window, baseline_window = _window_dicts(window)
-    current_window_for_id = WindowSpec(window.start, window.end)
+    data_window = _window_to_dict(window)
+    baseline_window = data_window  # populated in two halves below
 
     if not hrv_current and not hrv_baseline:
         return Anomaly(
-            id=_make_id("hrv_drop", current_window_for_id),
+            id=_make_id("hrv_drop", window),
             rule="hrv_drop",
             metric="heart_rate_variability",
             status=AnomalyStatus.DATA_NOT_AVAILABLE,
@@ -124,8 +117,9 @@ def evaluate_hrv(
                 "metric_points."
             ),
             data_window=data_window,
-            baseline=baseline_window,
-            current={"mean_ms": None, "samples": 0},
+            baseline_window=baseline_window,
+            current_value={"mean_ms": None, "samples": 0},
+            baseline_value={"mean_ms": None, "samples": 0},
             context={"missing_metric": "heart_rate_variability"},
             recommendation=None,
         )
@@ -135,7 +129,7 @@ def evaluate_hrv(
         or len(hrv_baseline) < thresholds.min_baseline_samples
     ):
         return Anomaly(
-            id=_make_id("hrv_drop", current_window_for_id),
+            id=_make_id("hrv_drop", window),
             rule="hrv_drop",
             metric="heart_rate_variability",
             status=AnomalyStatus.INSUFFICIENT_SAMPLES,
@@ -147,10 +141,10 @@ def evaluate_hrv(
                 f"min baseline={thresholds.min_baseline_samples})."
             ),
             data_window=data_window,
-            baseline=baseline_window,
-            current={"mean_ms": None, "samples": len(hrv_current)},
+            baseline_window=baseline_window,
+            current_value={"mean_ms": None, "samples": len(hrv_current)},
+            baseline_value={"mean_ms": None, "samples": len(hrv_baseline)},
             context={},
-            recommendation=None,
         )
 
     mean_current = daily_mean(hrv_current)
@@ -161,7 +155,7 @@ def evaluate_hrv(
     fired = pct is not None and pct <= -thresholds.hrv_drop_pct
     if not fired:
         return Anomaly(
-            id=_make_id("hrv_drop", current_window_for_id),
+            id=_make_id("hrv_drop", window),
             rule="hrv_drop",
             metric="heart_rate_variability",
             status=AnomalyStatus.WITHIN_THRESHOLD,
@@ -172,19 +166,19 @@ def evaluate_hrv(
                 f"No drop beyond the {thresholds.hrv_drop_pct * 100:.0f}% threshold."
             ),
             data_window=data_window,
-            baseline=baseline_window,
-            current={"mean_ms": mean_current, "samples": len(hrv_current)},
-            baseline={"mean_ms": mean_baseline, "samples": len(hrv_baseline)},
+            baseline_window=baseline_window,
+            current_value={"mean_ms": mean_current, "samples": len(hrv_current)},
+            baseline_value={"mean_ms": mean_baseline, "samples": len(hrv_baseline)},
             context={"pct_change": pct},
         )
 
     severity = (
         AnomalySeverity.PROMINENT
-        if context.illness_marker_in_window or context.rhr_current and daily_mean(context.rhr_current) and daily_mean(context.rhr_baseline) and (daily_mean(context.rhr_current) - daily_mean(context.rhr_baseline)) / max(daily_mean(context.rhr_baseline), 1e-9) >= thresholds.rhr_rise_pct
+        if context.illness_marker_in_window
         else AnomalySeverity.INFO
     )
     return Anomaly(
-        id=_make_id("hrv_drop", current_window_for_id),
+        id=_make_id("hrv_drop", window),
         rule="hrv_drop",
         metric="heart_rate_variability",
         status=AnomalyStatus.FIRED,
@@ -195,9 +189,9 @@ def evaluate_hrv(
             f"Threshold: {thresholds.hrv_drop_pct * 100:.0f}% drop."
         ),
         data_window=data_window,
-        baseline=baseline_window,
-        current={"mean_ms": mean_current, "samples": len(hrv_current)},
-        baseline={"mean_ms": mean_baseline, "samples": len(hrv_baseline)},
+        baseline_window=baseline_window,
+        current_value={"mean_ms": mean_current, "samples": len(hrv_current)},
+        baseline_value={"mean_ms": mean_baseline, "samples": len(hrv_baseline)},
         context={
             "pct_change": pct,
             "rhr_co_movement": _rhr_pct(context, thresholds),
@@ -251,7 +245,8 @@ def evaluate_rhr(
     window (a coherent illness signal) or when a sleep-stage
     ``awake`` percentage spike is present.
     """
-    data_window, baseline_window = _window_dicts(window)
+    data_window = _window_to_dict(window)
+    baseline_window = data_window
 
     if not rhr_current and not rhr_baseline:
         return Anomaly(
@@ -262,9 +257,9 @@ def evaluate_rhr(
             severity=AnomalySeverity.INFO,
             summary="RHR not yet ingested.",
             data_window=data_window,
-            baseline=baseline_window,
-            current={"mean_bpm": None, "samples": 0},
-            baseline={"mean_bpm": None, "samples": 0},
+            baseline_window=baseline_window,
+            current_value={"mean_bpm": None, "samples": 0},
+            baseline_value={"mean_bpm": None, "samples": 0},
             context={"missing_metric": "resting_heart_rate"},
         )
 
@@ -283,9 +278,9 @@ def evaluate_rhr(
                 f"(current={len(rhr_current)}, baseline={len(rhr_baseline)})."
             ),
             data_window=data_window,
-            baseline=baseline_window,
-            current={"mean_bpm": None, "samples": len(rhr_current)},
-            baseline={"mean_bpm": None, "samples": len(rhr_baseline)},
+            baseline_window=baseline_window,
+            current_value={"mean_bpm": None, "samples": len(rhr_current)},
+            baseline_value={"mean_bpm": None, "samples": len(rhr_baseline)},
         )
 
     mean_current = daily_mean(rhr_current)
@@ -307,9 +302,9 @@ def evaluate_rhr(
                 f"No rise beyond the {thresholds.rhr_rise_pct * 100:.0f}% threshold."
             ),
             data_window=data_window,
-            baseline=baseline_window,
-            current={"mean_bpm": mean_current, "samples": len(rhr_current)},
-            baseline={"mean_bpm": mean_baseline, "samples": len(rhr_baseline)},
+            baseline_window=baseline_window,
+            current_value={"mean_bpm": mean_current, "samples": len(rhr_current)},
+            baseline_value={"mean_bpm": mean_baseline, "samples": len(rhr_baseline)},
             context={"pct_change": pct},
         )
 
@@ -330,9 +325,9 @@ def evaluate_rhr(
             f"Threshold: {thresholds.rhr_rise_pct * 100:.0f}% rise."
         ),
         data_window=data_window,
-        baseline=baseline_window,
-        current={"mean_bpm": mean_current, "samples": len(rhr_current)},
-        baseline={"mean_bpm": mean_baseline, "samples": len(rhr_baseline)},
+        baseline_window=baseline_window,
+        current_value={"mean_bpm": mean_current, "samples": len(rhr_current)},
+        baseline_value={"mean_bpm": mean_baseline, "samples": len(rhr_baseline)},
         context={
             "pct_change": pct,
             "illness_marker_in_window": context.illness_marker_in_window,
@@ -366,7 +361,8 @@ def evaluate_sleep(
     of the current window so the rule fires on any rolling 7-day
     comparison, not only the calendar week boundary.
     """
-    data_window, baseline_window = _window_dicts(window)
+    data_window = _window_to_dict(window)
+    baseline_window = data_window
     recent_total = sum(m for _, m in sleep_minutes_recent_week)
     prior_total = sum(m for _, m in sleep_minutes_prior_week)
 
@@ -379,9 +375,9 @@ def evaluate_sleep(
             severity=AnomalySeverity.INFO,
             summary="No sleep session data in the current or prior week.",
             data_window=data_window,
-            baseline=baseline_window,
-            current={"recent_week_total_minutes": 0.0, "nights": 0},
-            baseline={"prior_week_total_minutes": 0.0, "nights": 0},
+            baseline_window=baseline_window,
+            current_value={"recent_week_total_minutes": 0.0, "nights": 0},
+            baseline_value={"prior_week_total_minutes": 0.0, "nights": 0},
             context={"missing_metric": "sleep_sessions.duration_minutes"},
         )
 
@@ -412,9 +408,9 @@ def evaluate_sleep(
                 f"Max consecutive nights under {thresholds.sleep_minimum_minutes / 60.0:.0f}h: {consecutive_short}."
             ),
             data_window=data_window,
-            baseline=baseline_window,
-            current={"recent_week_total_minutes": recent_total, "nights": len(sleep_minutes_recent_week)},
-            baseline={"prior_week_total_minutes": prior_total, "nights": len(sleep_minutes_prior_week)},
+            baseline_window=baseline_window,
+            current_value={"recent_week_total_minutes": recent_total, "nights": len(sleep_minutes_recent_week)},
+            baseline_value={"prior_week_total_minutes": prior_total, "nights": len(sleep_minutes_prior_week)},
             context={"pct_change": pct, "consecutive_short_nights": consecutive_short},
         )
 
@@ -435,9 +431,9 @@ def evaluate_sleep(
         severity=severity,
         summary=f"Sleep collapse fired: {'; '.join(reasons)}.",
         data_window=data_window,
-        baseline=baseline_window,
-        current={"recent_week_total_minutes": recent_total, "nights": len(sleep_minutes_recent_week)},
-        baseline={"prior_week_total_minutes": prior_total, "nights": len(sleep_minutes_prior_week)},
+        baseline_window=baseline_window,
+        current_value={"recent_week_total_minutes": recent_total, "nights": len(sleep_minutes_recent_week)},
+        baseline_value={"prior_week_total_minutes": prior_total, "nights": len(sleep_minutes_prior_week)},
         context={
             "pct_change": pct,
             "consecutive_short_nights": consecutive_short,
@@ -491,7 +487,8 @@ def evaluate_steps(
     rest day are common causes). It is only ``prominent`` if a
     sustained illness marker is also present.
     """
-    data_window, baseline_window = _window_dicts(window)
+    data_window = _window_to_dict(window)
+    baseline_window = data_window
 
     if not steps_current_daily and not steps_baseline_daily:
         return Anomaly(
@@ -502,9 +499,9 @@ def evaluate_steps(
             severity=AnomalySeverity.INFO,
             summary="No daily steps data in the current or baseline window.",
             data_window=data_window,
-            baseline=baseline_window,
-            current={"mean_daily_steps": None, "days": 0},
-            baseline={"mean_daily_steps": None, "days": 0},
+            baseline_window=baseline_window,
+            current_value={"mean_daily_steps": None, "days": 0},
+            baseline_value={"mean_daily_steps": None, "days": 0},
             context={"missing_metric": "metric_intervals(steps)"},
         )
 
@@ -534,9 +531,9 @@ def evaluate_steps(
                 f"(current={len(current_values)}, baseline={len(baseline_values)})."
             ),
             data_window=data_window,
-            baseline=baseline_window,
-            current={"mean_daily_steps": mean_current, "days": len(current_values)},
-            baseline={"mean_daily_steps": mean_baseline, "days": len(baseline_values)},
+            baseline_window=baseline_window,
+            current_value={"mean_daily_steps": mean_current, "days": len(current_values)},
+            baseline_value={"mean_daily_steps": mean_baseline, "days": len(baseline_values)},
         )
 
     fired = ratio is not None and ratio < thresholds.steps_collapse_ratio
@@ -553,9 +550,9 @@ def evaluate_steps(
                 f"No collapse beyond the {thresholds.steps_collapse_ratio * 100:.0f}% threshold."
             ),
             data_window=data_window,
-            baseline=baseline_window,
-            current={"mean_daily_steps": mean_current, "days": len(current_values)},
-            baseline={"mean_daily_steps": mean_baseline, "days": len(baseline_values)},
+            baseline_window=baseline_window,
+            current_value={"mean_daily_steps": mean_current, "days": len(current_values)},
+            baseline_value={"mean_daily_steps": mean_baseline, "days": len(baseline_values)},
             context={"ratio": ratio},
         )
 
@@ -575,9 +572,9 @@ def evaluate_steps(
             f"(7-day mean {mean_current:.0f} vs baseline {mean_baseline:.0f})."
         ),
         data_window=data_window,
-        baseline=baseline_window,
-        current={"mean_daily_steps": mean_current, "days": len(current_values)},
-        baseline={"mean_daily_steps": mean_baseline, "days": len(baseline_values)},
+        baseline_window=baseline_window,
+        current_value={"mean_daily_steps": mean_current, "days": len(current_values)},
+        baseline_value={"mean_daily_steps": mean_baseline, "days": len(baseline_values)},
         context={"ratio": ratio, "illness_marker_in_window": context.illness_marker_in_window},
         recommendation=(
             "Cross-reference training load and travel before drawing a conclusion. "

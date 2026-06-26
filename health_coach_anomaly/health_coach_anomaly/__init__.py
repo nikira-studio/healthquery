@@ -11,7 +11,7 @@ See ``README.md`` for usage and the package layout.
 from __future__ import annotations
 
 from .detector import AnomalyDetector
-from .output import Anomaly, AnomalyReport, AnomalySeverity
+from .output import Anomaly, AnomalyReport, AnomalySeverity, AnomalyStatus
 from .rules import BUILTIN_RULES
 from .thresholds import DEFAULT_THRESHOLDS, TunableThresholds
 from .windows import WindowSpec, daily_mean, percent_change
@@ -21,6 +21,7 @@ __all__ = [
     "AnomalyDetector",
     "AnomalyReport",
     "AnomalySeverity",
+    "AnomalyStatus",
     "BUILTIN_RULES",
     "DEFAULT_THRESHOLDS",
     "TunableThresholds",

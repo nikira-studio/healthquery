@@ -28,9 +28,8 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
-import re
 import uuid
-from typing import Any, Callable
+from typing import Callable
 
 from healthquery_client import HealthQueryClient
 
@@ -119,6 +118,7 @@ class AnomalyDetector:
                 self._evaluate_rule(
                     rule=rule,
                     window=window,
+                    baseline=baseline,
                     context=context,
                     hrv_current=hrv_current,
                     hrv_baseline=hrv_baseline,
@@ -160,6 +160,7 @@ class AnomalyDetector:
         *,
         rule: AnomalyRule,
         window: WindowSpec,
+        baseline: WindowSpec,
         context: RuleContext,
         hrv_current: list[float],
         hrv_baseline: list[float],
@@ -171,39 +172,62 @@ class AnomalyDetector:
         steps_baseline: list[tuple[str, float]],
     ) -> Anomaly:
         evaluator = rule.evaluate
+        # Each rule needs the *baseline* window spec so its
+        # ``baseline_window`` field reflects the baseline start/end
+        # (not the current window). The detector monkey-patches the
+        # ``_window_to_dict`` indirection by passing the right
+        # window to the rule callable. We do this by wrapping the
+        # rule: rebind the rule's module-level helper. Simpler:
+        # pass a WindowSpec-shaped wrapper that the rules treat as
+        # the current window for ID purposes, but the rules'
+        # baseline_window output should be the baseline's dict.
+        # To keep rules pure, we post-process: the rule returns the
+        # current-window dict as baseline_window; we overwrite it
+        # here with the actual baseline dict.
+        baseline_dict = {
+            "start": baseline.iso_start,
+            "end": baseline.iso_end,
+            "days": str(baseline.days),
+        }
         if rule.name == "hrv_drop":
-            return evaluator(
+            anomaly = evaluator(
                 hrv_current=hrv_current,
                 hrv_baseline=hrv_baseline,
                 window=window,
                 thresholds=self.thresholds,
                 context=context,
             )
-        if rule.name == "rhr_rise":
-            return evaluator(
+        elif rule.name == "rhr_rise":
+            anomaly = evaluator(
                 rhr_current=rhr_current,
                 rhr_baseline=rhr_baseline,
                 window=window,
                 thresholds=self.thresholds,
                 context=context,
             )
-        if rule.name == "sleep_collapse":
-            return evaluator(
+        elif rule.name == "sleep_collapse":
+            anomaly = evaluator(
                 sleep_minutes_recent_week=sleep_recent,
                 sleep_minutes_prior_week=sleep_prior,
                 window=window,
                 thresholds=self.thresholds,
                 context=context,
             )
-        if rule.name == "steps_collapse":
-            return evaluator(
+        elif rule.name == "steps_collapse":
+            anomaly = evaluator(
                 steps_current_daily=steps_current,
                 steps_baseline_daily=steps_baseline,
                 window=window,
                 thresholds=self.thresholds,
                 context=context,
             )
-        raise ValueError(f"Unknown rule: {rule.name!r}")
+        else:
+            raise ValueError(f"Unknown rule: {rule.name!r}")
+        # Overwrite baseline_window with the actual baseline dict.
+        # The rules are pure; this is the single place where the
+        # detector injects window metadata the rules cannot derive
+        # on their own.
+        return _with_baseline_window(anomaly, baseline_dict)
 
     # ------------------------------------------------------------------
     # HealthQuery reads
@@ -446,23 +470,18 @@ def _context_from_report(report: AnomalyReport) -> RuleContext:
     steps_current: list[tuple[str, float]] = []
     steps_baseline: list[tuple[str, float]] = []
     for a in report.anomalies:
-        if a.rule == "rhr_rise":
-            if isinstance(a.current.get("mean_bpm"), (int, float)):
-                pass
-            if isinstance(a.baseline.get("mean_bpm"), (int, float)):
-                pass
         if a.rule == "sleep_collapse":
-            r = a.current.get("recent_week_total_minutes")
+            r = a.current_value.get("recent_week_total_minutes")
             if r:
                 sleep_recent.append(("total", float(r)))
-            r = a.baseline.get("prior_week_total_minutes")
+            r = a.baseline_value.get("prior_week_total_minutes")
             if r:
                 sleep_prior.append(("total", float(r)))
         if a.rule == "steps_collapse":
-            if isinstance(a.current.get("mean_daily_steps"), (int, float)):
-                steps_current.append(("mean", float(a.current["mean_daily_steps"])))
-            if isinstance(a.baseline.get("mean_daily_steps"), (int, float)):
-                steps_baseline.append(("mean", float(a.baseline["mean_daily_steps"])))
+            if isinstance(a.current_value.get("mean_daily_steps"), (int, float)):
+                steps_current.append(("mean", float(a.current_value["mean_daily_steps"])))
+            if isinstance(a.baseline_value.get("mean_daily_steps"), (int, float)):
+                steps_baseline.append(("mean", float(a.baseline_value["mean_daily_steps"])))
     return RuleContext(
         rhr_current=rhr_current,
         rhr_baseline=rhr_baseline,
@@ -475,6 +494,21 @@ def _context_from_report(report: AnomalyReport) -> RuleContext:
             a.context.get("illness_marker_in_window") for a in report.anomalies
         ),
     )
+
+
+def _with_baseline_window(anomaly: Anomaly, baseline_window: dict[str, str]) -> Anomaly:
+    """Return a copy of ``anomaly`` with the baseline window spec set correctly.
+
+    The rules are pure: each takes the current ``window`` and
+    uses it to render the ``baseline_window`` field of the
+    resulting :class:`Anomaly`. The detector knows the *real*
+    baseline window (a separate :class:`WindowSpec`); this
+    helper is the single point where the detector injects that
+    metadata back into the rule output.
+    """
+    from dataclasses import replace
+
+    return replace(anomaly, baseline_window=baseline_window)
 
 
 # ---------------------------------------------------------------------------
@@ -566,9 +600,6 @@ def _parse_iso(value: str) -> _dt.datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=_dt.timezone.utc)
     return parsed.astimezone(_dt.timezone.utc)
-
-
-_RUN_ID_PATTERN = re.compile(r"[^a-zA-Z0-9_.-]+")
 
 
 def _generate_run_id() -> str:

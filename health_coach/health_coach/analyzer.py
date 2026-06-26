@@ -185,7 +185,7 @@ def _trend_aggregate_hrv(
         return WeeklyTrend(
             name="HRV (heart rate variability)",
             data_available=False,
-            notes=("data not available — HRV rows present but no numeric values"),
+            notes=("data not available — HRV rows present but no numeric values",),
         )
     window_start, window_end = window
     inside: list[float] = []
@@ -202,7 +202,7 @@ def _trend_aggregate_hrv(
         return WeeklyTrend(
             name="HRV (heart rate variability)",
             data_available=False,
-            notes=("data not available — no HRV samples inside the report window"),
+            notes=("data not available — no HRV samples inside the report window",),
         )
     window_mean = statistics.fmean(inside)
     aggregates = (
@@ -247,7 +247,7 @@ def _trend_aggregate_resting_heart_rate(
         return WeeklyTrend(
             name="Resting heart rate",
             data_available=False,
-            notes=("data not available — no resting_heart_rate rows in the window"),
+            notes=("data not available — no resting_heart_rate rows in the window",),
         )
     by_day: dict[date, list[float]] = {}
     for p in points:
@@ -260,7 +260,7 @@ def _trend_aggregate_resting_heart_rate(
         return WeeklyTrend(
             name="Resting heart rate",
             data_available=False,
-            notes=("data not available — resting_heart_rate rows exist but none in the window"),
+            notes=("data not available — resting_heart_rate rows exist but none in the window",),
         )
     daily_means = [statistics.fmean(v) for v in by_day.values() if v]
     window_mean = statistics.fmean(daily_means) if daily_means else 0.0
@@ -292,7 +292,7 @@ def _trend_aggregate_oxygen_saturation(
         return WeeklyTrend(
             name="Oxygen saturation",
             data_available=False,
-            notes=("data not available — no oxygen_saturation rows in the window"),
+            notes=("data not available — no oxygen_saturation rows in the window",),
         )
     values: list[float] = []
     for p in points:
@@ -303,7 +303,7 @@ def _trend_aggregate_oxygen_saturation(
         return WeeklyTrend(
             name="Oxygen saturation",
             data_available=False,
-            notes=("data not available — oxygen_saturation rows exist but none in the window"),
+            notes=("data not available — oxygen_saturation rows exist but none in the window",),
         )
     return WeeklyTrend(
         name="Oxygen saturation",
@@ -334,7 +334,7 @@ def _trend_aggregate_sleep(
         return WeeklyTrend(
             name="Sleep",
             data_available=False,
-            notes=("data not available — no sleep_sessions rows in the window"),
+            notes=("data not available — no sleep_sessions rows in the window",),
         )
     in_window: list[Mapping[str, object]] = []
     for s in sessions:
@@ -349,7 +349,7 @@ def _trend_aggregate_sleep(
         return WeeklyTrend(
             name="Sleep",
             data_available=False,
-            notes=("data not available — sleep_sessions exist but none ended in the window"),
+            notes=("data not available — sleep_sessions exist but none ended in the window",),
         )
     durations = [
         float(s["duration_minutes"])
@@ -360,7 +360,7 @@ def _trend_aggregate_sleep(
         return WeeklyTrend(
             name="Sleep",
             data_available=False,
-            notes=("data not available — sleep sessions in window have no duration_minutes"),
+            notes=("data not available — sleep sessions in window have no duration_minutes",),
         )
     notes: list[str] = []
     # Coarse stage mix (privacy-preserving; no per-stage durations in the body).
@@ -420,58 +420,117 @@ def _trend_aggregate_activity(
 ) -> WeeklyTrend:
     """Activity trend line.
 
-    Steps are bucketed to the UTC date of the interval's ``end_time``;
-    this matches HealthQuery's ``daily_summaries.steps`` bucketing. The
-    trend is the per-day total — same shape the operator's dashboard
-    shows — so the operator can compare summary to dashboard without
-    normalization.
+    Steps come from ``daily_summaries`` (HealthQuery's per-day rollup)
+    when available — that is the canonical number the operator's
+    dashboard shows. We only fall back to bucketing
+    ``metric_intervals.steps`` when daily_summaries does not cover the
+    window. Distance has no per-day rollup, so we bucket
+    ``metric_intervals.distance`` by the UTC date of the interval's
+    ``start_time``, summing the per-day totals (we discard the
+    sub-minute per-step records that double-count the workout
+    intervals).
     """
     if not steps and not daily_summaries:
         return WeeklyTrend(
             name="Activity",
             data_available=False,
-            notes=("data not available — no steps / daily_summaries in the window"),
+            notes=("data not available — no steps / daily_summaries in the window",),
         )
+
     by_day_steps: dict[date, float] = {}
+    by_day_steps_from_ds: dict[date, float] = {}
+    # Prefer daily_summaries.steps as the per-day source of truth.
+    for ds in daily_summaries:
+        date_str = ds.get("summary_date")
+        if not isinstance(date_str, str):
+            continue
+        try:
+            d = date.fromisoformat(date_str)
+        except ValueError:
+            continue
+        if not (window[0] <= d <= window[1]):
+            continue
+        steps_val = ds.get("steps")
+        if isinstance(steps_val, (int, float)):
+            by_day_steps_from_ds[d] = float(steps_val)
+
+    # When daily_summaries does not cover a day, fall back to bucketing
+    # metric_intervals.steps by start_time. We exclude the sub-minute
+    # per-step rows (< 60 second intervals) to avoid double-counting
+    # workout intervals — the daily-total rows Health Connect emits
+    # already include them.
+    by_day_steps_from_intervals: dict[date, float] = {}
     for s in steps:
-        d = _to_date(s.get("end_time")) or _to_date(s.get("start_time"))
+        d = _to_date(s.get("start_time")) or _to_date(s.get("end_time"))
         if d is None or not (window[0] <= d <= window[1]):
             continue
-        if isinstance(s.get("numeric_value"), (int, float)):
-            by_day_steps[d] = by_day_steps.get(d, 0.0) + float(s["numeric_value"])
+        if not isinstance(s.get("numeric_value"), (int, float)):
+            continue
+        start = s.get("start_time")
+        end = s.get("end_time")
+        if isinstance(start, str) and isinstance(end, str):
+            # Daily-total rows span 24h. Anything shorter is a sub-day
+            # bucket and may double-count. Only count sub-hour buckets
+            # that span the day boundary (the daily total row), and
+            # treat per-minute rows (< 5 min) as sub-workout detail to
+            # skip.
+            try:
+                start_dt = _parse_iso(start)
+                end_dt = _parse_iso(end)
+                if start_dt and end_dt:
+                    span_seconds = (end_dt - start_dt).total_seconds()
+                    if span_seconds < 300:  # < 5 minutes
+                        continue
+            except Exception:
+                pass
+        by_day_steps_from_intervals[d] = (
+            by_day_steps_from_intervals.get(d, 0.0) + float(s["numeric_value"])
+        )
+
+    for d, val in by_day_steps_from_ds.items():
+        by_day_steps[d] = val
+    for d, val in by_day_steps_from_intervals.items():
+        if d not in by_day_steps:
+            by_day_steps[d] = val
+
     by_day_distance: dict[date, float] = {}
     for s in distance:
-        d = _to_date(s.get("end_time")) or _to_date(s.get("start_time"))
+        d = _to_date(s.get("start_time")) or _to_date(s.get("end_time"))
         if d is None or not (window[0] <= d <= window[1]):
             continue
-        if isinstance(s.get("numeric_value"), (int, float)):
-            by_day_distance[d] = by_day_distance.get(d, 0.0) + float(s["numeric_value"])
-    daily_totals = sorted(set(by_day_steps) | set(by_day_distance))
-    if not daily_totals and daily_summaries:
-        # Fall back to daily_summaries.steps when the interval tables
-        # don't have data for the window (older imports had only
-        # daily_summaries).
-        for ds in daily_summaries:
-            date_str = ds.get("summary_date")
-            if not isinstance(date_str, str):
-                continue
+        if not isinstance(s.get("numeric_value"), (int, float)):
+            continue
+        start = s.get("start_time")
+        end = s.get("end_time")
+        if isinstance(start, str) and isinstance(end, str):
             try:
-                d = date.fromisoformat(date_str)
-            except ValueError:
-                continue
-            if window[0] <= d <= window[1]:
-                steps_val = ds.get("steps")
-                if isinstance(steps_val, (int, float)):
-                    by_day_steps[d] = float(steps_val)
-        daily_totals = sorted(by_day_steps)
+                start_dt = _parse_iso(start)
+                end_dt = _parse_iso(end)
+                if start_dt and end_dt:
+                    span_seconds = (end_dt - start_dt).total_seconds()
+                    if span_seconds < 300:  # skip sub-minute detail
+                        continue
+            except Exception:
+                pass
+        by_day_distance[d] = by_day_distance.get(d, 0.0) + float(s["numeric_value"])
+
+    daily_totals = sorted(set(by_day_steps) | set(by_day_distance))
     if not daily_totals:
         return WeeklyTrend(
             name="Activity",
             data_available=False,
-            notes=("data not available — no activity rows in the window"),
+            notes=("data not available — no activity rows in the window",),
         )
-    step_values = list(by_day_steps.values())
-    distance_values = list(by_day_distance.values())
+
+    # Drop in-progress days where steps == 0 (today's partial rollup
+    # is not a real "0 steps" reading). When daily_summaries is the
+    # source, an in-progress day typically shows steps=0 + active_minutes>=0;
+    # we filter by checking steps == 0 in the per-day dict.
+    completed_step_days = {d: v for d, v in by_day_steps.items() if v > 0}
+    completed_distance_days = {d: v for d, v in by_day_distance.items() if v > 0}
+    step_values = list(completed_step_days.values())
+    distance_values = list(completed_distance_days.values())
+
     aggregates: list[MetricAggregate] = []
     if step_values:
         aggregates.append(
@@ -499,18 +558,28 @@ def _trend_aggregate_activity(
                 sample_size=len(distance_values),
             )
         )
-    # Calorie coverage is sparse (Health Connect writes once a day); only
-    # aggregate when the window has at least one row.
-    calorie_values = [
-        float(c["numeric_value"])
-        for c in calories
-        if isinstance(c.get("numeric_value"), (int, float))
-        and (
-            _to_date(c.get("end_time"))
-            or _to_date(c.get("start_time"))
-        )
-        and window[0] <= (_to_date(c.get("end_time")) or _to_date(c.get("start_time")) or date.min) <= window[1]
-    ]
+    # Calorie coverage is sparse (Health Connect writes once a day);
+    # bucket by start_time and skip sub-minute records the same way.
+    calorie_values: list[float] = []
+    for c in calories:
+        if not isinstance(c.get("numeric_value"), (int, float)):
+            continue
+        d = _to_date(c.get("start_time")) or _to_date(c.get("end_time"))
+        if d is None or not (window[0] <= d <= window[1]):
+            continue
+        start = c.get("start_time")
+        end = c.get("end_time")
+        if isinstance(start, str) and isinstance(end, str):
+            try:
+                start_dt = _parse_iso(start)
+                end_dt = _parse_iso(end)
+                if start_dt and end_dt:
+                    span_seconds = (end_dt - start_dt).total_seconds()
+                    if span_seconds < 300:
+                        continue
+            except Exception:
+                pass
+        calorie_values.append(float(c["numeric_value"]))
     if calorie_values:
         aggregates.append(
             MetricAggregate(
@@ -520,7 +589,7 @@ def _trend_aggregate_activity(
                 sample_size=len(calorie_values),
             )
         )
-    days_with_data = len(daily_totals)
+    days_with_data = len(step_values) if step_values else len(daily_totals)
     notes: list[str] = []
     if step_values:
         above_goal_days = sum(1 for v in step_values if v >= STEPS_GOAL_DEFAULT)
@@ -549,7 +618,7 @@ def _trend_aggregate_workouts(
         return WeeklyTrend(
             name="Workouts",
             data_available=False,
-            notes=("data not available — no workouts in the window"),
+            notes=("data not available — no workouts in the window",),
         )
     durations = [
         float(w["duration_minutes"])
@@ -598,7 +667,7 @@ def _trend_aggregate_body_comp() -> WeeklyTrend:
     return WeeklyTrend(
         name="Body composition",
         data_available=False,
-        notes=("data not available — weight / body_fat / lean_body_mass not ingested"),
+        notes=("data not available — weight / body_fat / lean_body_mass not ingested",),
     )
 
 
