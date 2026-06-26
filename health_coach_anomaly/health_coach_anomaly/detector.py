@@ -149,6 +149,7 @@ class AnomalyDetector:
                 "min_current_samples": self.thresholds.min_current_samples,
                 "min_baseline_samples": self.thresholds.min_baseline_samples,
             },
+            _rule_context=context,
         )
 
     # ------------------------------------------------------------------
@@ -449,9 +450,15 @@ class AnomalyDetector:
                 lines.append(f"- {a.metric} — {a.summary}")
             lines.append("")
         lines.append("**Context block:**")
-        ctx = summarize_context(_context_from_report(report), window=report.window)
+        # Use the live rule context the detector actually fed
+        # into the rules, not a re-derivation from the report.
+        # This keeps the sample counts honest: a rule that ran
+        # on 13 RHR samples renders as 13, not 0.
+        ctx = report._rule_context
+        if ctx is None:
+            ctx = _context_from_report(report)
         lines.append("```json")
-        lines.append(json.dumps(ctx, indent=2, sort_keys=True))
+        lines.append(json.dumps(summarize_context(ctx, window=report.window), indent=2, sort_keys=True))
         lines.append("```")
         return "\n".join(lines)
 

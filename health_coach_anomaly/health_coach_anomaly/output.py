@@ -124,6 +124,11 @@ class AnomalyReport:
     generated_at: str
     anomalies: list[Anomaly]
     thresholds: dict[str, Any]
+    # Private: the live rule context the detector assembled.
+    # Used by ``render_summary`` to render a context block that
+    # reflects the actual sample counts the rules saw, not a
+    # re-derivation. Not part of the public to_dict payload.
+    _rule_context: Any = None
 
     @property
     def fired(self) -> list[Anomaly]:
